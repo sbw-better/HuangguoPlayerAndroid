@@ -60,11 +60,24 @@
 5. 如果缺少 Android SDK 36，按 Android Studio 提示安装。
 6. Build → Build APK(s)。
 
-Debug APK 默认位置：
+Release APK 默认位置：
 
 ```text
-app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/release/app-release.apk
 ```
+
+## 覆盖安装与签名
+
+Android 仅允许使用**相同签名证书**且 `versionCode` 更高的 APK 覆盖更新。GitHub Actions 已改为构建 release APK，并使用仓库 Secrets 中的固定签名证书；每次工作流运行会自动递增 `versionCode`。
+
+首次配置时，在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 中添加以下 Secrets：
+
+- `ANDROID_KEYSTORE_BASE64`：JKS/keystore 文件的 Base64 内容；
+- `ANDROID_KEYSTORE_PASSWORD`：keystore 密码；
+- `ANDROID_KEY_ALIAS`：密钥别名；
+- `ANDROID_KEY_PASSWORD`：密钥密码。
+
+请长期保存同一份 keystore。更换 keystore 后，已安装的旧版本无法覆盖更新，必须卸载一次；这是 Android 的签名安全机制。
 
 ## 播放流程
 
@@ -130,14 +143,14 @@ Media3 HLS 播放
 5. 构建成功后，在该次运行页面底部下载：
 
 ```text
-HuangguoPlayer-debug-apk
+HuangguoPlayer-release-apk
 ```
 
 其中包含：
 
 ```text
-app-debug.apk
-app-debug.apk.sha256
+app-release.apk
+app-release.apk.sha256
 ```
 
-Workflow 使用 JDK 17、Android SDK 36、Build Tools 36.0.0、Gradle 9.6.0，并执行 `:app:assembleDebug`。
+Workflow 使用 JDK 17、Android SDK 36、Build Tools 36.0.0、Gradle 9.6.0，并执行 `:app:assembleRelease`。

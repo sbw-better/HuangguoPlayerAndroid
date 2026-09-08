@@ -1,0 +1,50 @@
+plugins {
+    id 'com.android.application'
+}
+
+def ciRunNumber = providers.environmentVariable('GITHUB_RUN_NUMBER').orElse('0').get().toInteger()
+def versionCodeValue = 20_000_000 + ciRunNumber
+def releaseStoreFile = System.getenv('ANDROID_KEYSTORE_PATH')
+def releaseStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+
+android {
+    namespace 'com.example.huangguoplayer'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.example.huangguoplayer'
+        minSdk 24
+        targetSdk 36
+        // GitHub Actions supplies an ever-increasing run number, so every APK can update its predecessor.
+        versionCode versionCodeValue
+        versionName "2.0.${ciRunNumber}"
+    }
+
+    signingConfigs {
+        release {
+            // Values are supplied only in CI through GitHub Actions secrets; never commit a keystore or password.
+            if (releaseStoreFile != null && !releaseStoreFile.trim().isEmpty()) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.8.0'
+    implementation 'androidx.media3:media3-exoplayer:1.11.0'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.11.0'
+    implementation 'androidx.media3:media3-ui:1.11.0'
+}

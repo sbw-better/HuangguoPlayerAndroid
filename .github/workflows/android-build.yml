@@ -5,7 +5,9 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'HuangguoPlayerAndroid/**'
+      - 'app/**'
+      - '*.gradle'
+      - 'gradle.properties'
       - '.github/workflows/android-build.yml'
 
 jobs:
@@ -35,20 +37,31 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Build debug APK
-        working-directory: HuangguoPlayerAndroid
-        run: gradle --no-daemon clean assembleDebug
+      - name: Configure release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/huangguoplayer-release.jks"
+          test -s "$RUNNER_TEMP/huangguoplayer-release.jks"
+
+      - name: Build release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/huangguoplayer-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: gradle --no-daemon clean assembleRelease
 
       - name: Generate SHA256
-        working-directory: HuangguoPlayerAndroid
-        run: sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/app-debug.apk.sha256
+        run: sha256sum app/build/outputs/apk/release/app-release.apk > app/build/outputs/apk/release/app-release.apk.sha256
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HuangguoPlayer-debug-apk
+          name: HuangguoPlayer-release-apk
           path: |
-            HuangguoPlayerAndroid/app/build/outputs/apk/debug/app-debug.apk
-            HuangguoPlayerAndroid/app/build/outputs/apk/debug/app-debug.apk.sha256
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/apk/release/app-release.apk.sha256
           if-no-files-found: error
           retention-days: 14

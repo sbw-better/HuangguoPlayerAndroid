@@ -13,6 +13,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.util.LruCache;
 import android.util.Rational;
 import android.view.Gravity;
 import android.view.View;
@@ -140,29 +141,27 @@ public class MainActivity extends AppCompatActivity {
     private String currentTab = "home";
     private String currentCategoryId = "home";
     private int currentPage = 1;
-    private boolean categoryLoading = false;
     private boolean fullscreen = false;
     private String currentMediaUrl = "";
     private float playbackSpeed = 1f;
+    private int categoryRequestId = 0;
+    private int searchRequestId = 0;
+    private int episodeRequestId = 0;
+    private int playbackRequestId = 0;
 
-    private final Map<String, Bitmap> imageCache = new HashMap<>();
+    // The cache is synchronized by LruCache and capped at 24 MiB to avoid retaining every poster.
+    private final LruCache<String, Bitmap> imageCache = new LruCache<String, Bitmap>(24 * 1024) {
+        @Override
+        protected int sizeOf(String key, Bitmap value) {
+            return Math.max(1, value.getByteCount() / 1024);
+        }
+    };
 
     private final Runnable progressSaver = new Runnable() {
         @Override
         public void run() {
             savePlaybackProgress();
             main.postDelayed(this, 2000);
-        }
-    };
-
-    // Media3 默认控制器只知道当前一个 MediaItem，因此它自己的“上一项/下一项”
-    // 会被自动置灰。这里把这两个按钮接管为真正的“上一集/下一集”。
-    private final Runnable controllerEpisodeButtonSync = new Runnable() {
-        @Override
-        public void run() {
-            bindPlayerControllerEpisodeButtons();
-            syncEpisodeNavigationButtons();
-            main.postDelayed(this, 350);
         }
     };
 
@@ -180,7 +179,6 @@ public class MainActivity extends AppCompatActivity {
         updateSpeedButton();
         loadCategory("home", true);
         main.postDelayed(progressSaver, 2000);
-        main.post(controllerEpisodeButtonSync);
     }
 
     private void bindViews() {
@@ -219,7 +217,10 @@ public class MainActivity extends AppCompatActivity {
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
         player.setPlaybackParameters(new PlaybackParameters(playbackSpeed));
-        playerView.post(this::bindPlayerControllerEpisodeButtons);
+        playerView.post(() -> {
+            bindPlayerControllerEpisodeButtons();
+            syncEpisodeNavigationButtons();
+        });
         player.addListener(new Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int playbackState) {
@@ -376,8 +377,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadCategory(String id, boolean reset) {
-        if (categoryLoading) return;
-        categoryLoading = true;
+        final int requestId = ++categoryRequestId;
         currentTab = "home";
         currentCategoryId = id;
         styleTabs();
@@ -410,6 +410,7 @@ public class MainActivity extends AppCompatActivity {
                 else results = parseGridCards(html, "home".equals(category));
 
                 main.post(() -> {
+                    if (requestId != categoryRequestId) return;
                     if (reset) displayed.clear();
                     appendUnique(displayed, results);
                     setStatus(results.isEmpty() && page == 1 ? "没有找到内容" : "已加载 " + displayed.size() + " 项");
@@ -417,14 +418,13 @@ public class MainActivity extends AppCompatActivity {
                     boolean canPage = !"home".equals(category) && !results.isEmpty();
                     loadMoreButton.setVisibility(canPage ? View.VISIBLE : View.GONE);
                     loadMoreButton.setEnabled(true);
-                    categoryLoading = false;
                 });
             } catch (Exception e) {
                 main.post(() -> {
+                    if (requestId != categoryRequestId) return;
                     if (!reset && currentPage > 1) currentPage--;
                     setStatus("加载失败：" + safeMessage(e));
                     loadMoreButton.setEnabled(true);
-                    categoryLoading = false;
                 });
             }
         });
@@ -433,6 +433,7 @@ public class MainActivity extends AppCompatActivity {
     private void search() {
         final String keyword = searchInput.getText().toString().trim();
         if (keyword.isEmpty()) return;
+        final int requestId = ++searchRequestId;
         currentTab = "search";
         styleTabs();
         saveSearchHistory(keyword);
@@ -449,13 +450,16 @@ public class MainActivity extends AppCompatActivity {
                 if (results.isEmpty()) results = parseSearchFallback(html);
                 List<Drama> finalResults = results;
                 main.post(() -> {
+                    if (requestId != searchRequestId) return;
                     lastSearch.clear();
                     lastSearch.addAll(finalResults);
                     setStatus("找到 " + finalResults.size() + " 个结果");
                     renderDramas(finalResults);
                 });
             } catch (Exception e) {
-                main.post(() -> setStatus("搜索失败：" + safeMessage(e)));
+                main.post(() -> {
+                    if (requestId == searchRequestId) setStatus("搜索失败：" + safeMessage(e));
+                });
             }
         });
     }
@@ -602,13 +606,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadEpisodes(Drama drama) {
+        final int requestId = ++episodeRequestId;
+        ++playbackRequestId;
         currentDrama = drama;
+        currentEpisodes.clear();
+        currentEpisodeIndex = -1;
+        currentMediaUrl = "";
         setStatus("正在读取：" + drama.title);
         io.execute(() -> {
             try {
                 String html = httpGetText(SITE + "/detail/" + drama.id + "/", SITE + "/");
                 List<Episode> episodes = parseEpisodes(html);
                 main.post(() -> {
+                    if (requestId != episodeRequestId || currentDrama == null
+                            || !drama.id.equals(currentDrama.id)) return;
                     currentEpisodes.clear();
                     currentEpisodes.addAll(episodes);
                     currentEpisodeIndex = loadResumeEpisodeIndex(drama.id);
@@ -618,7 +629,9 @@ public class MainActivity extends AppCompatActivity {
                     else showEpisodeDialog();
                 });
             } catch (Exception e) {
-                main.post(() -> setStatus("读取剧集失败：" + safeMessage(e)));
+                main.post(() -> {
+                    if (requestId == episodeRequestId) setStatus("读取剧集失败：" + safeMessage(e));
+                });
             }
         });
     }
@@ -668,6 +681,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void playEpisode(int index) {
         if (currentDrama == null || index < 0 || index >= currentEpisodes.size()) return;
+        final int requestId = ++playbackRequestId;
+        final String dramaId = currentDrama.id;
         savePlaybackProgress();
         currentEpisodeIndex = index;
         Episode ep = currentEpisodes.get(index);
@@ -682,9 +697,16 @@ public class MainActivity extends AppCompatActivity {
                 String html = httpGetText(ep.url, SITE + "/");
                 String mediaUrl = extractPlayback(html, ep.ep);
                 if (mediaUrl.isEmpty()) throw new IllegalStateException("未解析到播放地址");
-                main.post(() -> startHls(mediaUrl, index));
+                main.post(() -> {
+                    if (requestId == playbackRequestId && currentDrama != null
+                            && dramaId.equals(currentDrama.id)) {
+                        startHls(mediaUrl, index);
+                    }
+                });
             } catch (Exception e) {
-                main.post(() -> setStatus("解析失败：" + safeMessage(e)));
+                main.post(() -> {
+                    if (requestId == playbackRequestId) setStatus("解析失败：" + safeMessage(e));
+                });
             }
         });
     }
@@ -719,6 +741,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void retryCurrent() {
         if (!currentMediaUrl.isEmpty() && currentEpisodeIndex >= 0) {
+            ++playbackRequestId;
             setStatus("正在重试...");
             startHls(currentMediaUrl, currentEpisodeIndex);
         } else if (currentEpisodeIndex >= 0) {
@@ -1046,6 +1069,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void loadImage(String rawUrl, ImageView target) {
         String url = stableImageUrl(rawUrl);
+        target.setTag(url);
         Bitmap cached = imageCache.get(url);
         if (cached != null) {
             target.setImageBitmap(cached);
@@ -1069,7 +1093,9 @@ public class MainActivity extends AppCompatActivity {
                     if (bmp != null) {
                         imageCache.put(url, bmp);
                         Bitmap finalBmp = bmp;
-                        main.post(() -> target.setImageBitmap(finalBmp));
+                        main.post(() -> {
+                            if (url.equals(target.getTag())) target.setImageBitmap(finalBmp);
+                        });
                     }
                 } finally {
                     conn.disconnect();
@@ -1341,7 +1367,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         main.removeCallbacks(progressSaver);
-        main.removeCallbacks(controllerEpisodeButtonSync);
         savePlaybackProgress();
         if (player != null) player.release();
         io.shutdownNow();
