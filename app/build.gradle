@@ -4,6 +4,7 @@ plugins {
 
 def ciRunNumber = providers.environmentVariable('GITHUB_RUN_NUMBER').orElse('0').get().toInteger()
 def versionCodeValue = 20_000_000 + ciRunNumber
+def updateRepository = providers.environmentVariable('GITHUB_REPOSITORY').orElse('').get()
 def releaseStoreFile = System.getenv('ANDROID_KEYSTORE_PATH')
 def releaseStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
 def releaseKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
@@ -20,6 +21,12 @@ android {
         // GitHub Actions supplies an ever-increasing run number, so every APK can update its predecessor.
         versionCode versionCodeValue
         versionName "2.0.${ciRunNumber}"
+        // Filled by GitHub Actions so release builds know where to check for updates.
+        buildConfigField 'String', 'UPDATE_REPOSITORY', "\"${updateRepository}\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     signingConfigs {

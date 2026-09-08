@@ -220,13 +220,32 @@
             app:show_buffering="when_playing"
             app:use_controller="true" />
 
-        <TextView
-            android:id="@+id/nowPlaying"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:textColor="#F4F6F8"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/nowPlaying"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="#F4F6F8"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/closePlayerButton"
+                android:layout_width="40dp"
+                android:layout_height="36dp"
+                android:background="@drawable/bg_dark_button"
+                android:contentDescription="关闭播放"
+                android:text="×"
+                android:textAllCaps="false"
+                android:textColor="#E8ECF3"
+                android:textSize="24sp" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/playerActions1"

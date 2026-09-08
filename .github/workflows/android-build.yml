@@ -10,6 +10,9 @@ on:
       - 'gradle.properties'
       - '.github/workflows/android-build.yml'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -80,3 +83,16 @@ jobs:
             app/build/outputs/apk/release/app-release.apk.sha256
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v2.0.${{ github.run_number }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          VERSION_CODE=$((20000000 + RUN_NUMBER))
+          gh release create "$RELEASE_TAG" \
+            app/build/outputs/apk/release/app-release.apk \
+            app/build/outputs/apk/release/app-release.apk.sha256 \
+            --title "HuangguoPlayer $RELEASE_TAG" \
+            --notes "自动构建发布。 versionCode: $VERSION_CODE"

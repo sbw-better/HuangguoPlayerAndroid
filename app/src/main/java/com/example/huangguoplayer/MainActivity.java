@@ -1,6 +1,11 @@
 package com.example.huangguoplayer;
 
 import android.app.PictureInPictureParams;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
@@ -10,8 +15,11 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.net.Uri;
+import android.provider.Settings;
 import android.text.InputType;
 import android.util.LruCache;
 import android.util.Rational;
@@ -35,6 +43,7 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.FileProvider;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.PlaybackParameters;
@@ -50,6 +59,7 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -87,8 +97,10 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_PROGRESS = "progress";
     private static final String KEY_SEARCH_HISTORY = "search_history";
     private static final String KEY_SPEED = "playback_speed";
+    private static final String KEY_UPDATE_LAST_CHECK = "update_last_check";
     private static final long FULLSCREEN_CONTROLS_TIMEOUT_MS = 3000L;
-    private static final int COLOR_ACCENT = Color.rgb(139, 92, 246);
+    private static final long UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000L;
+    private static final int COLOR_ACCENT = Color.rgb(217, 154, 69);
     private static final int COLOR_SURFACE = Color.rgb(21, 26, 36);
     private static final int COLOR_SURFACE_ELEVATED = Color.rgb(26, 32, 44);
     private static final int COLOR_TEXT_PRIMARY = Color.rgb(248, 250, 252);
@@ -135,6 +147,7 @@ public class MainActivity extends AppCompatActivity {
     private Button speedButton;
     private Button pipButton;
     private Button fullscreenButton;
+    private Button closePlayerButton;
     private View controllerPrevButton;
     private View controllerNextButton;
 
@@ -154,9 +167,20 @@ public class MainActivity extends AppCompatActivity {
     private int searchRequestId = 0;
     private int episodeRequestId = 0;
     private int playbackRequestId = 0;
+    private long updateDownloadId = -1L;
+    private File pendingUpdateApk;
     private final Runnable hideFullscreenControls = () -> {
         if (fullscreen) {
             playerActions2.setVisibility(View.GONE);
+        }
+    };
+    private final BroadcastReceiver updateDownloadReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) {
+                long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+                if (id == updateDownloadId) onUpdateDownloadFinished();
+            }
         }
     };
 
@@ -189,6 +213,8 @@ public class MainActivity extends AppCompatActivity {
         styleTabs();
         updateSpeedButton();
         loadCategory("home", true);
+        registerReceiver(updateDownloadReceiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+        checkForAppUpdate();
         main.postDelayed(progressSaver, 2000);
     }
 
@@ -222,6 +248,7 @@ public class MainActivity extends AppCompatActivity {
         speedButton = findViewById(R.id.speedButton);
         pipButton = findViewById(R.id.pipButton);
         fullscreenButton = findViewById(R.id.fullscreenButton);
+        closePlayerButton = findViewById(R.id.closePlayerButton);
     }
 
     private void setupPlayer() {
@@ -279,6 +306,7 @@ public class MainActivity extends AppCompatActivity {
         speedButton.setOnClickListener(v -> showSpeedDialog());
         pipButton.setOnClickListener(v -> enterPip());
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
+        closePlayerButton.setOnClickListener(v -> closePlayer());
         playerView.setOnClickListener(v -> {
             if (fullscreen) {
                 toggleFullscreenControls();
@@ -776,6 +804,22 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void closePlayer() {
+        savePlaybackProgress();
+        ++playbackRequestId;
+        if (fullscreen) exitFullscreen();
+        if (player != null) {
+            player.pause();
+            player.clearMediaItems();
+        }
+        playerPanel.setVisibility(View.GONE);
+        currentMediaUrl = "";
+        currentEpisodeIndex = -1;
+        currentEpisodes.clear();
+        currentDrama = null;
+        setStatus("");
+    }
+
     private void showSpeedDialog() {
         final float[] speeds = new float[]{0.75f, 1f, 1.25f, 1.5f, 2f};
         String[] labels = new String[]{"0.75x", "1.0x", "1.25x", "1.5x", "2.0x"};
@@ -1033,14 +1077,11 @@ public class MainActivity extends AppCompatActivity {
         List<Episode> out = new ArrayList<>();
         Map<String, Boolean> seen = new HashMap<>();
 
-        Pattern gridPattern = Pattern.compile(
-                "<div\\s+class=\\\"[^\\\"]*\\bhg-web-detail__ep-grid\\b[^\\\"]*\\\"[^>]*>([\\s\\S]*?)</div>",
+        // Episode entries are nested in multiple divs. The old non-greedy div match stopped
+        // at the first nested closing tag, so only the first episode was ever available.
+        Pattern links = Pattern.compile("<a\\b[^>]*\\bdata-ep-id=\\\"[^\\\"]*\\\"[^>]*>[\\s\\S]*?</a>",
                 Pattern.CASE_INSENSITIVE);
-        Matcher grid = gridPattern.matcher(html);
-        String area = grid.find() ? grid.group(1) : html;
-
-        Pattern links = Pattern.compile("<a\\b[^>]*>[\\s\\S]*?</a>", Pattern.CASE_INSENSITIVE);
-        Matcher lm = links.matcher(area);
+        Matcher lm = links.matcher(html);
         while (lm.find()) {
             String tag = lm.group();
             String href = firstGroup(tag, "href=\\\"([^\\\"]+)\\\"");
@@ -1087,6 +1128,142 @@ public class MainActivity extends AppCompatActivity {
             if (embedded.find()) url = embedded.group();
         }
         return url;
+    }
+
+    private void checkForAppUpdate() {
+        final String repository = BuildConfig.UPDATE_REPOSITORY;
+        if (repository == null || repository.trim().isEmpty()) return;
+
+        long now = System.currentTimeMillis();
+        long lastCheck = getSharedPreferences(PREFS, MODE_PRIVATE).getLong(KEY_UPDATE_LAST_CHECK, 0L);
+        if (now - lastCheck < UPDATE_CHECK_INTERVAL_MS) return;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putLong(KEY_UPDATE_LAST_CHECK, now).apply();
+
+        io.execute(() -> {
+            try {
+                JSONObject release = new JSONObject(httpGetGitHubJson(
+                        "https://api.github.com/repos/" + repository + "/releases/latest"));
+                long releaseVersionCode = releaseVersionCode(release.optString("body", ""));
+                if (releaseVersionCode <= installedVersionCode()) return;
+
+                String apkUrl = "";
+                JSONArray assets = release.optJSONArray("assets");
+                if (assets != null) {
+                    for (int i = 0; i < assets.length(); i++) {
+                        JSONObject asset = assets.optJSONObject(i);
+                        if (asset == null) continue;
+                        if (asset.optString("name", "").endsWith(".apk")) {
+                            apkUrl = asset.optString("browser_download_url", "");
+                            break;
+                        }
+                    }
+                }
+                if (apkUrl.isEmpty()) return;
+
+                String versionName = release.optString("tag_name", "新版本");
+                String finalApkUrl = apkUrl;
+                main.post(() -> showUpdateDialog(versionName, releaseVersionCode, finalApkUrl));
+            } catch (Exception ignored) {
+                // Update checks are best-effort and must never interrupt playback or browsing.
+            }
+        });
+    }
+
+    private long releaseVersionCode(String notes) {
+        Matcher matcher = Pattern.compile("versionCode\\s*:\\s*(\\d+)", Pattern.CASE_INSENSITIVE)
+                .matcher(notes == null ? "" : notes);
+        if (!matcher.find()) return 0L;
+        try {
+            return Long.parseLong(matcher.group(1));
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private long installedVersionCode() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).getLongVersionCode();
+            }
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    private void showUpdateDialog(String versionName, long versionCode, String apkUrl) {
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("发现新版本 " + versionName)
+                .setMessage("已有新版本可用，下载完成后将打开系统安装确认页。")
+                .setNegativeButton("稍后再说", null)
+                .setPositiveButton("立即更新", (dialog, which) -> downloadUpdate(apkUrl, versionCode))
+                .show();
+    }
+
+    private void downloadUpdate(String apkUrl, long versionCode) {
+        File downloadDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if (downloadDir == null) {
+            Toast.makeText(this, "无法创建更新下载目录", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        pendingUpdateApk = new File(downloadDir, "huangguoplayer-" + versionCode + ".apk");
+        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(apkUrl))
+                .setTitle("短剧播放器更新")
+                .setDescription("正在下载新版本")
+                .setMimeType("application/vnd.android.package-archive")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationUri(Uri.fromFile(pendingUpdateApk));
+        updateDownloadId = ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(request);
+        Toast.makeText(this, "已开始下载更新", Toast.LENGTH_SHORT).show();
+    }
+
+    private void onUpdateDownloadFinished() {
+        updateDownloadId = -1L;
+        if (pendingUpdateApk == null || !pendingUpdateApk.isFile() || pendingUpdateApk.length() == 0) {
+            Toast.makeText(this, "更新下载失败，请稍后重试", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        installUpdateApk(pendingUpdateApk);
+    }
+
+    private void installUpdateApk(File apkFile) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && !getPackageManager().canRequestPackageInstalls()) {
+            pendingUpdateApk = apkFile;
+            new AlertDialog.Builder(this)
+                    .setTitle("允许安装更新")
+                    .setMessage("请允许“短剧播放器”安装未知来源应用，随后会自动打开安装确认页。")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("去授权", (dialog, which) -> startActivity(new Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + getPackageName()))))
+                    .show();
+            return;
+        }
+
+        Uri apkUri = FileProvider.getUriForFile(this,
+                getPackageName() + ".fileprovider", apkFile);
+        Intent installIntent = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(apkUri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivity(installIntent);
+    }
+
+    private String httpGetGitHubJson(String url) throws Exception {
+        HttpURLConnection conn = openConnection(url, "https://github.com/");
+        conn.setRequestProperty("Accept", "application/vnd.github+json");
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line).append('\n');
+            return sb.toString();
+        } finally {
+            conn.disconnect();
+        }
     }
 
     private String httpGetText(String url, String referer) throws Exception {
@@ -1398,6 +1575,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && pendingUpdateApk != null
+                && getPackageManager().canRequestPackageInstalls()) {
+            File apkFile = pendingUpdateApk;
+            pendingUpdateApk = null;
+            installUpdateApk(apkFile);
+        }
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
         savePlaybackProgress();
@@ -1415,6 +1604,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         main.removeCallbacks(progressSaver);
+        unregisterReceiver(updateDownloadReceiver);
         savePlaybackProgress();
         if (player != null) player.release();
         io.shutdownNow();
