@@ -97,9 +97,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_PROGRESS = "progress";
     private static final String KEY_SEARCH_HISTORY = "search_history";
     private static final String KEY_SPEED = "playback_speed";
-    private static final String KEY_UPDATE_LAST_CHECK = "update_last_check";
     private static final long FULLSCREEN_CONTROLS_TIMEOUT_MS = 3000L;
-    private static final long UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000L;
     private static final int COLOR_ACCENT = Color.rgb(217, 154, 69);
     private static final int COLOR_SURFACE = Color.rgb(21, 26, 36);
     private static final int COLOR_SURFACE_ELEVATED = Color.rgb(26, 32, 44);
@@ -1133,11 +1131,6 @@ public class MainActivity extends AppCompatActivity {
     private void checkForAppUpdate() {
         final String repository = BuildConfig.UPDATE_REPOSITORY;
         if (repository == null || repository.trim().isEmpty()) return;
-
-        long now = System.currentTimeMillis();
-        long lastCheck = getSharedPreferences(PREFS, MODE_PRIVATE).getLong(KEY_UPDATE_LAST_CHECK, 0L);
-        if (now - lastCheck < UPDATE_CHECK_INTERVAL_MS) return;
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putLong(KEY_UPDATE_LAST_CHECK, now).apply();
 
         io.execute(() -> {
             try {

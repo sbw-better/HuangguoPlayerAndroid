@@ -163,7 +163,7 @@ Workflow 使用 JDK 17、Android SDK 36、Build Tools 36.0.0、Gradle 9.6.0，�
 2. 上传临时构建产物；
 3. 创建一个 GitHub Release，并附上 APK 与 SHA256 文件。
 
-应用会在启动时每 4 小时检查一次最新 Release。发现 `versionCode` 更高的版本时，会提示下载 APK 并打开 Android 系统安装确认页。
+应用每次冷启动时都会检查最新 Release。发现 `versionCode` 更高的版本时，会提示下载 APK 并打开 Android 系统安装确认页。
 
 首次安装带有此功能的版本仍需手动下载并安装。之后的版本才会出现应用内更新提示。更新依赖 GitHub 的公开 Release：仓库必须是公开仓库；若改为私有仓库，请改用自己的公开更新服务器，不能把 GitHub 访问令牌放进 APK。
 
