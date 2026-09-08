@@ -125,6 +125,7 @@ public class MainActivity extends AppCompatActivity {
     private EditText searchInput;
     private Button searchButton;
     private Button clearHistoryButton;
+    private Button checkUpdateButton;
     private Button tabHome;
     private Button tabSearch;
     private Button tabFav;
@@ -226,6 +227,7 @@ public class MainActivity extends AppCompatActivity {
         searchInput = findViewById(R.id.searchInput);
         searchButton = findViewById(R.id.searchButton);
         clearHistoryButton = findViewById(R.id.clearHistoryButton);
+        checkUpdateButton = findViewById(R.id.checkUpdateButton);
         tabHome = findViewById(R.id.tabHome);
         tabSearch = findViewById(R.id.tabSearch);
         tabFav = findViewById(R.id.tabFav);
@@ -279,6 +281,7 @@ public class MainActivity extends AppCompatActivity {
     private void setupEvents() {
         searchButton.setOnClickListener(v -> search());
         clearHistoryButton.setOnClickListener(v -> clearSearchHistory());
+        checkUpdateButton.setOnClickListener(v -> checkForAppUpdate(true));
         searchInput.setSingleLine(true);
         searchInput.setInputType(InputType.TYPE_CLASS_TEXT);
         searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
@@ -1129,15 +1132,27 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void checkForAppUpdate() {
+        checkForAppUpdate(false);
+    }
+
+    private void checkForAppUpdate(boolean showResult) {
         final String repository = BuildConfig.UPDATE_REPOSITORY;
-        if (repository == null || repository.trim().isEmpty()) return;
+        if (repository == null || repository.trim().isEmpty()) {
+            if (showResult) Toast.makeText(this, "未配置更新仓库", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (showResult) Toast.makeText(this, "正在检查更新…", Toast.LENGTH_SHORT).show();
 
         io.execute(() -> {
             try {
                 JSONObject release = new JSONObject(httpGetGitHubJson(
                         "https://api.github.com/repos/" + repository + "/releases/latest"));
                 long releaseVersionCode = releaseVersionCode(release.optString("body", ""));
-                if (releaseVersionCode <= installedVersionCode()) return;
+                if (releaseVersionCode <= installedVersionCode()) {
+                    if (showResult) main.post(() -> Toast.makeText(this,
+                            "当前已是最新版本", Toast.LENGTH_SHORT).show());
+                    return;
+                }
 
                 String apkUrl = "";
                 JSONArray assets = release.optJSONArray("assets");
@@ -1151,13 +1166,18 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 }
-                if (apkUrl.isEmpty()) return;
+                if (apkUrl.isEmpty()) {
+                    if (showResult) main.post(() -> Toast.makeText(this,
+                            "最新 Release 未找到 APK", Toast.LENGTH_SHORT).show());
+                    return;
+                }
 
                 String versionName = release.optString("tag_name", "新版本");
                 String finalApkUrl = apkUrl;
                 main.post(() -> showUpdateDialog(versionName, releaseVersionCode, finalApkUrl));
-            } catch (Exception ignored) {
-                // Update checks are best-effort and must never interrupt playback or browsing.
+            } catch (Exception e) {
+                if (showResult) main.post(() -> Toast.makeText(this,
+                        "检查更新失败：" + safeMessage(e), Toast.LENGTH_LONG).show());
             }
         });
     }
