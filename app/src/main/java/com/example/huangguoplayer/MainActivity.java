@@ -80,7 +80,7 @@ import java.util.regex.Pattern;
 import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-
+// 短剧播放器业务类
 public class MainActivity extends AppCompatActivity {
 
     private static final String SITE = "https://huangguoai.com";
