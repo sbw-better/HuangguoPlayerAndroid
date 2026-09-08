@@ -87,6 +87,12 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_PROGRESS = "progress";
     private static final String KEY_SEARCH_HISTORY = "search_history";
     private static final String KEY_SPEED = "playback_speed";
+    private static final long FULLSCREEN_CONTROLS_TIMEOUT_MS = 3000L;
+    private static final int COLOR_ACCENT = Color.rgb(139, 92, 246);
+    private static final int COLOR_SURFACE = Color.rgb(21, 26, 36);
+    private static final int COLOR_SURFACE_ELEVATED = Color.rgb(26, 32, 44);
+    private static final int COLOR_TEXT_PRIMARY = Color.rgb(248, 250, 252);
+    private static final int COLOR_TEXT_SECONDARY = Color.rgb(185, 195, 210);
 
     private static final Category[] CATEGORIES = new Category[]{
             new Category("首页", "home"),
@@ -99,6 +105,11 @@ public class MainActivity extends AppCompatActivity {
 
     private final ExecutorService io = Executors.newFixedThreadPool(4);
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final Runnable hideFullscreenControls = () -> {
+        if (fullscreen) {
+            playerActions2.setVisibility(View.GONE);
+        }
+    };
 
     private LinearLayout topArea;
     private LinearLayout searchArea;
@@ -268,6 +279,11 @@ public class MainActivity extends AppCompatActivity {
         speedButton.setOnClickListener(v -> showSpeedDialog());
         pipButton.setOnClickListener(v -> enterPip());
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
+        playerView.setOnClickListener(v -> {
+            if (fullscreen) {
+                toggleFullscreenControls();
+            }
+        });
     }
 
     private void bindPlayerControllerEpisodeButtons() {
@@ -348,8 +364,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void styleTab(Button button, boolean selected) {
-        button.setBackgroundColor(selected ? Color.WHITE : Color.rgb(46, 52, 64));
-        button.setTextColor(selected ? Color.BLACK : Color.WHITE);
+        button.setBackground(rounded(selected ? COLOR_ACCENT : Color.TRANSPARENT, 12));
+        button.setTextColor(selected ? Color.WHITE : COLOR_TEXT_SECONDARY);
+        button.setTextSize(15);
+        button.setElevation(selected ? dp(2) : 0);
     }
 
     private void renderCategories() {
@@ -359,8 +377,10 @@ public class MainActivity extends AppCompatActivity {
             b.setText(category.name);
             b.setAllCaps(false);
             b.setTextSize(12);
-            b.setTextColor(category.id.equals(currentCategoryId) ? Color.BLACK : Color.WHITE);
-            b.setBackground(rounded(category.id.equals(currentCategoryId) ? Color.WHITE : Color.rgb(32, 36, 45), 18));
+            boolean selected = category.id.equals(currentCategoryId);
+            b.setTextColor(selected ? Color.WHITE : COLOR_TEXT_SECONDARY);
+            b.setBackground(rounded(selected ? COLOR_ACCENT : COLOR_SURFACE_ELEVATED, 18));
+            b.setPadding(dp(14), 0, dp(14), 0);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
             lp.setMargins(0, 0, dp(8), 0);
@@ -474,8 +494,9 @@ public class MainActivity extends AppCompatActivity {
             b.setText(keyword);
             b.setAllCaps(false);
             b.setTextSize(12);
-            b.setTextColor(Color.rgb(210, 216, 224));
-            b.setBackground(rounded(Color.rgb(32, 36, 45), 18));
+            b.setTextColor(COLOR_TEXT_SECONDARY);
+            b.setBackground(rounded(COLOR_SURFACE_ELEVATED, 18));
+            b.setPadding(dp(12), 0, dp(12), 0);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, dp(38));
             lp.setMargins(0, 0, dp(7), 0);
@@ -537,8 +558,9 @@ public class MainActivity extends AppCompatActivity {
     private View createDramaCard(Drama drama, int index) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(6), dp(6), dp(6), dp(8));
-        card.setBackground(rounded(Color.rgb(23, 26, 33), 14));
+        card.setPadding(dp(6), dp(6), dp(6), dp(10));
+        card.setBackground(rounded(COLOR_SURFACE, 18));
+        card.setElevation(dp(2));
 
         GridLayout.LayoutParams cardLp = new GridLayout.LayoutParams();
         cardLp.columnSpec = GridLayout.spec(index % 2, 1f);
@@ -550,7 +572,8 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout.LayoutParams posterLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(210));
         posterFrame.setLayoutParams(posterLp);
-        posterFrame.setBackgroundColor(Color.rgb(36, 40, 50));
+        posterFrame.setBackground(rounded(COLOR_SURFACE_ELEVATED, 14));
+        posterFrame.setClipToOutline(true);
 
         ImageView poster = new ImageView(this);
         poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -561,7 +584,7 @@ public class MainActivity extends AppCompatActivity {
         fav.setText(isFavorite(drama.id) ? "★" : "☆");
         fav.setTextSize(18);
         fav.setTextColor(Color.WHITE);
-        fav.setBackgroundColor(Color.argb(165, 0, 0, 0));
+        fav.setBackground(rounded(Color.argb(185, 15, 18, 26), 12));
         fav.setPadding(0, 0, 0, 0);
         FrameLayout.LayoutParams favLp = new FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP | Gravity.END);
         favLp.setMargins(0, dp(5), dp(5), 0);
@@ -586,7 +609,7 @@ public class MainActivity extends AppCompatActivity {
 
         card.addView(posterFrame);
 
-        TextView title = textView(drama.title, 14, Color.WHITE);
+        TextView title = textView(drama.title, 14, COLOR_TEXT_PRIMARY);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setPadding(dp(4), dp(8), dp(4), dp(2));
         title.setMaxLines(2);
@@ -652,9 +675,13 @@ public class MainActivity extends AppCompatActivity {
             b.setAllCaps(false);
             b.setTextSize(11);
             if (i == currentEpisodeIndex) {
-                b.setTextColor(Color.BLACK);
-                b.setBackgroundColor(Color.WHITE);
+                b.setTextColor(Color.WHITE);
+                b.setBackground(rounded(COLOR_ACCENT, 12));
+            } else {
+                b.setTextColor(COLOR_TEXT_SECONDARY);
+                b.setBackground(rounded(COLOR_SURFACE_ELEVATED, 12));
             }
+            b.setPadding(dp(4), 0, dp(4), 0);
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
             lp.columnSpec = GridLayout.spec(i % 4, 1f);
             lp.width = 0;
@@ -824,7 +851,7 @@ public class MainActivity extends AppCompatActivity {
         contentScroll.setVisibility(View.GONE);
         nowPlaying.setVisibility(View.GONE);
         playerActions1.setVisibility(View.GONE);
-        playerActions2.setVisibility(View.VISIBLE);
+        playerActions2.setVisibility(View.GONE);
         retryButton.setVisibility(View.GONE);
         speedButton.setVisibility(View.VISIBLE);
         pipButton.setVisibility(View.VISIBLE);
@@ -839,8 +866,29 @@ public class MainActivity extends AppCompatActivity {
         hideSystemBars();
     }
 
+    private void toggleFullscreenControls() {
+        if (playerActions2.getVisibility() == View.VISIBLE) {
+            hideFullscreenControls();
+        } else {
+            showFullscreenControls();
+        }
+    }
+
+    private void showFullscreenControls() {
+        if (!fullscreen) return;
+        playerActions2.setVisibility(View.VISIBLE);
+        main.removeCallbacks(hideFullscreenControls);
+        main.postDelayed(hideFullscreenControls, FULLSCREEN_CONTROLS_TIMEOUT_MS);
+    }
+
+    private void hideFullscreenControls() {
+        main.removeCallbacks(hideFullscreenControls);
+        playerActions2.setVisibility(View.GONE);
+    }
+
     private void exitFullscreen() {
         fullscreen = false;
+        main.removeCallbacks(hideFullscreenControls);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
         restoreNormalUi();
         showSystemBars();

@@ -3,9 +3,9 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F1115"
+    android:background="#0B0D12"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="16dp">
 
     <LinearLayout
         android:id="@+id/topArea"
@@ -17,46 +17,60 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="短剧播放器"
-            android:textColor="#F4F6F8"
-            android:textSize="22sp"
+            android:textColor="#F8FAFC"
+            android:textSize="28sp"
             android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:text="发现好故事，随时续看"
+            android:textColor="#8E98AA"
+            android:textSize="13sp" />
 
         <LinearLayout
             android:id="@+id/tabRow"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:orientation="horizontal">
+            android:layout_height="52dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_tab_rail"
+            android:orientation="horizontal"
+            android:padding="4dp">
 
             <Button
                 android:id="@+id/tabHome"
                 android:layout_width="0dp"
-                android:layout_height="42dp"
+                android:layout_height="match_parent"
                 android:layout_weight="1"
+                android:background="@android:color/transparent"
                 android:text="首页"
                 android:textAllCaps="false" />
 
             <Button
                 android:id="@+id/tabSearch"
                 android:layout_width="0dp"
-                android:layout_height="42dp"
+                android:layout_height="match_parent"
                 android:layout_weight="1"
+                android:background="@android:color/transparent"
                 android:text="搜索"
                 android:textAllCaps="false" />
 
             <Button
                 android:id="@+id/tabFav"
                 android:layout_width="0dp"
-                android:layout_height="42dp"
+                android:layout_height="match_parent"
                 android:layout_weight="1"
+                android:background="@android:color/transparent"
                 android:text="收藏"
                 android:textAllCaps="false" />
 
             <Button
                 android:id="@+id/tabRecent"
                 android:layout_width="0dp"
-                android:layout_height="42dp"
+                android:layout_height="match_parent"
                 android:layout_weight="1"
+                android:background="@android:color/transparent"
                 android:text="最近"
                 android:textAllCaps="false" />
         </LinearLayout>
@@ -65,7 +79,7 @@
             android:id="@+id/categoryScroll"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="14dp"
             android:fillViewport="false"
             android:scrollbars="none">
 
@@ -151,9 +165,9 @@
         android:id="@+id/statusText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="7dp"
+        android:layout_marginTop="12dp"
         android:minHeight="20dp"
-        android:textColor="#9AA4B2"
+        android:textColor="#8E98AA"
         android:textSize="13sp" />
 
     <ScrollView
@@ -173,7 +187,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:columnCount="2"
-                android:paddingBottom="6dp" />
+                android:paddingTop="4dp"
+                android:paddingBottom="10dp" />
 
             <Button
                 android:id="@+id/loadMoreButton"
@@ -192,7 +207,7 @@
         android:id="@+id/playerPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#171A21"
+        android:background="@drawable/bg_surface"
         android:orientation="vertical"
         android:padding="8dp"
         android:visibility="gone">
@@ -225,7 +240,9 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
+                android:background="@drawable/bg_dark_button"
                 android:text="上一集"
+                android:textColor="#E8ECF3"
                 android:textAllCaps="false" />
 
             <Button
@@ -233,7 +250,9 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
+                android:background="@drawable/bg_dark_button"
                 android:text="选集"
+                android:textColor="#E8ECF3"
                 android:textAllCaps="false" />
 
             <Button
@@ -241,7 +260,9 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
+                android:background="@drawable/bg_dark_button"
                 android:text="下一集"
+                android:textColor="#E8ECF3"
                 android:textAllCaps="false" />
         </LinearLayout>
 
@@ -257,7 +278,9 @@
                 android:layout_width="0dp"
                 android:layout_height="40dp"
                 android:layout_weight="1"
+                android:background="@drawable/bg_dark_button"
                 android:text="重试"
+                android:textColor="#E8ECF3"
                 android:textAllCaps="false" />
 
             <Button
@@ -265,7 +288,9 @@
                 android:layout_width="0dp"
                 android:layout_height="40dp"
                 android:layout_weight="1"
+                android:background="@drawable/bg_dark_button"
                 android:text="1.0x"
+                android:textColor="#E8ECF3"
                 android:textAllCaps="false" />
 
             <Button
@@ -273,7 +298,9 @@
                 android:layout_width="0dp"
                 android:layout_height="40dp"
                 android:layout_weight="1"
+                android:background="@drawable/bg_dark_button"
                 android:text="画中画"
+                android:textColor="#E8ECF3"
                 android:textAllCaps="false" />
 
             <Button
@@ -281,7 +308,9 @@
                 android:layout_width="0dp"
                 android:layout_height="40dp"
                 android:layout_weight="1"
+                android:background="@drawable/bg_dark_button"
                 android:text="全屏"
+                android:textColor="#E8ECF3"
                 android:textAllCaps="false" />
         </LinearLayout>
     </LinearLayout>
