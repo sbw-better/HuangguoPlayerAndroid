@@ -128,6 +128,8 @@ public class MainActivity extends AppCompatActivity {
     private Button speedButton;
     private Button pipButton;
     private Button fullscreenButton;
+    private View controllerPrevButton;
+    private View controllerNextButton;
 
     private ExoPlayer player;
     private final List<Drama> displayed = new ArrayList<>();
@@ -153,6 +155,17 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    // Media3 默认控制器只知道当前一个 MediaItem，因此它自己的“上一项/下一项”
+    // 会被自动置灰。这里把这两个按钮接管为真正的“上一集/下一集”。
+    private final Runnable controllerEpisodeButtonSync = new Runnable() {
+        @Override
+        public void run() {
+            bindPlayerControllerEpisodeButtons();
+            syncEpisodeNavigationButtons();
+            main.postDelayed(this, 350);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -167,6 +180,7 @@ public class MainActivity extends AppCompatActivity {
         updateSpeedButton();
         loadCategory("home", true);
         main.postDelayed(progressSaver, 2000);
+        main.post(controllerEpisodeButtonSync);
     }
 
     private void bindViews() {
@@ -205,6 +219,7 @@ public class MainActivity extends AppCompatActivity {
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
         player.setPlaybackParameters(new PlaybackParameters(playbackSpeed));
+        playerView.post(this::bindPlayerControllerEpisodeButtons);
         player.addListener(new Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int playbackState) {
@@ -245,19 +260,60 @@ public class MainActivity extends AppCompatActivity {
 
         loadMoreButton.setOnClickListener(v -> loadCategory(currentCategoryId, false));
 
-        prevButton.setOnClickListener(v -> {
-            if (currentEpisodeIndex > 0) playEpisode(currentEpisodeIndex - 1);
-        });
-        nextButton.setOnClickListener(v -> {
-            if (currentEpisodeIndex >= 0 && currentEpisodeIndex < currentEpisodes.size() - 1) {
-                playEpisode(currentEpisodeIndex + 1);
-            }
-        });
+        prevButton.setOnClickListener(v -> playPreviousEpisode());
+        nextButton.setOnClickListener(v -> playNextEpisode());
         episodeButton.setOnClickListener(v -> showEpisodeDialog());
         retryButton.setOnClickListener(v -> retryCurrent());
         speedButton.setOnClickListener(v -> showSpeedDialog());
         pipButton.setOnClickListener(v -> enterPip());
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
+    }
+
+    private void bindPlayerControllerEpisodeButtons() {
+        if (controllerPrevButton == null) {
+            controllerPrevButton = playerView.findViewById(androidx.media3.ui.R.id.exo_prev);
+            if (controllerPrevButton != null) {
+                controllerPrevButton.setOnClickListener(v -> playPreviousEpisode());
+            }
+        }
+
+        if (controllerNextButton == null) {
+            controllerNextButton = playerView.findViewById(androidx.media3.ui.R.id.exo_next);
+            if (controllerNextButton != null) {
+                controllerNextButton.setOnClickListener(v -> playNextEpisode());
+            }
+        }
+    }
+
+    private void playPreviousEpisode() {
+        if (currentEpisodeIndex > 0) {
+            playEpisode(currentEpisodeIndex - 1);
+        }
+    }
+
+    private void playNextEpisode() {
+        if (currentEpisodeIndex >= 0 && currentEpisodeIndex < currentEpisodes.size() - 1) {
+            playEpisode(currentEpisodeIndex + 1);
+        }
+    }
+
+    private void syncEpisodeNavigationButtons() {
+        boolean canPrev = currentEpisodeIndex > 0;
+        boolean canNext = currentEpisodeIndex >= 0
+                && currentEpisodeIndex < currentEpisodes.size() - 1;
+
+        if (prevButton != null) prevButton.setEnabled(canPrev);
+        if (nextButton != null) nextButton.setEnabled(canNext);
+
+        syncControllerEpisodeButton(controllerPrevButton, canPrev);
+        syncControllerEpisodeButton(controllerNextButton, canNext);
+    }
+
+    private void syncControllerEpisodeButton(View button, boolean enabled) {
+        if (button == null) return;
+        button.setEnabled(enabled);
+        button.setClickable(enabled);
+        button.setAlpha(enabled ? 1.0f : 0.35f);
     }
 
     private void switchTab(String tab) {
@@ -617,8 +673,7 @@ public class MainActivity extends AppCompatActivity {
         Episode ep = currentEpisodes.get(index);
         playerPanel.setVisibility(View.VISIBLE);
         nowPlaying.setText(currentDrama.title + " · " + ep.name);
-        prevButton.setEnabled(index > 0);
-        nextButton.setEnabled(index < currentEpisodes.size() - 1);
+        syncEpisodeNavigationButtons();
         setStatus("正在解析 " + ep.name + "...");
         saveRecent(currentDrama, index, ep.name);
 
@@ -1286,6 +1341,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         main.removeCallbacks(progressSaver);
+        main.removeCallbacks(controllerEpisodeButtonSync);
         savePlaybackProgress();
         if (player != null) player.release();
         io.shutdownNow();
