@@ -11,7 +11,7 @@ on:
       - '.github/workflows/android-build.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -69,10 +69,17 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: gradle --no-daemon clean assembleRelease
+        run: gradle --no-daemon clean lintRelease assembleRelease
 
-      - name: Generate SHA256
-        run: sha256sum app/build/outputs/apk/release/app-release.apk > app/build/outputs/apk/release/app-release.apk.sha256
+      - name: Generate update metadata
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          APK_DIR=app/build/outputs/apk/release
+          SHA256=$(sha256sum "$APK_DIR/app-release.apk" | awk '{print $1}')
+          printf '%s  %s\n' "$SHA256" "app-release.apk" > "$APK_DIR/app-release.apk.sha256"
+          printf '{"versionCode":%s,"versionName":"v2.0.%s","apkName":"app-release.apk","sha256":"%s"}\n' \
+            "$((20000000 + RUN_NUMBER))" "$RUN_NUMBER" "$SHA256" > "$APK_DIR/update.json"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v6
@@ -81,8 +88,22 @@ jobs:
           path: |
             app/build/outputs/apk/release/app-release.apk
             app/build/outputs/apk/release/app-release.apk.sha256
+            app/build/outputs/apk/release/update.json
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download signed APK
+        uses: actions/download-artifact@v6
+        with:
+          name: HuangguoPlayer-release-apk
+          path: release
 
       - name: Publish APK to GitHub Release
         env:
@@ -92,7 +113,8 @@ jobs:
         run: |
           VERSION_CODE=$((20000000 + RUN_NUMBER))
           gh release create "$RELEASE_TAG" \
-            app/build/outputs/apk/release/app-release.apk \
-            app/build/outputs/apk/release/app-release.apk.sha256 \
+            release/app-release.apk \
+            release/app-release.apk.sha256 \
+            release/update.json \
             --title "HuangguoPlayer $RELEASE_TAG" \
             --notes "自动构建发布。 versionCode: $VERSION_CODE"

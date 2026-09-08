@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.database.Cursor;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
@@ -43,6 +44,7 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
@@ -60,6 +62,7 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -76,6 +79,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import java.security.MessageDigest;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
@@ -97,6 +102,9 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_PROGRESS = "progress";
     private static final String KEY_SEARCH_HISTORY = "search_history";
     private static final String KEY_SPEED = "playback_speed";
+    private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
+    private static final String KEY_UPDATE_FILE = "update_file";
+    private static final String KEY_UPDATE_SHA256 = "update_sha256";
     private static final long FULLSCREEN_CONTROLS_TIMEOUT_MS = 3000L;
     private static final int COLOR_ACCENT = Color.rgb(217, 154, 69);
     private static final int COLOR_SURFACE = Color.rgb(21, 26, 36);
@@ -168,6 +176,8 @@ public class MainActivity extends AppCompatActivity {
     private int playbackRequestId = 0;
     private long updateDownloadId = -1L;
     private File pendingUpdateApk;
+    private String pendingUpdateSha256 = "";
+    private boolean updateReceiverRegistered;
     private final Runnable hideFullscreenControls = () -> {
         if (fullscreen) {
             playerActions2.setVisibility(View.GONE);
@@ -212,7 +222,8 @@ public class MainActivity extends AppCompatActivity {
         styleTabs();
         updateSpeedButton();
         loadCategory("home", true);
-        registerReceiver(updateDownloadReceiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+        registerUpdateDownloadReceiver();
+        restorePendingUpdateDownload();
         checkForAppUpdate();
         main.postDelayed(progressSaver, 2000);
     }
@@ -605,12 +616,14 @@ public class MainActivity extends AppCompatActivity {
         posterFrame.setClipToOutline(true);
 
         ImageView poster = new ImageView(this);
+        poster.setContentDescription(drama.title + "，打开详情");
         poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
         posterFrame.addView(poster, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         Button fav = new Button(this);
         fav.setText(isFavorite(drama.id) ? "★" : "☆");
+        fav.setContentDescription(isFavorite(drama.id) ? "取消收藏 " + drama.title : "收藏 " + drama.title);
         fav.setTextSize(18);
         fav.setTextColor(Color.WHITE);
         fav.setBackground(rounded(Color.argb(185, 15, 18, 26), 12));
@@ -648,9 +661,12 @@ public class MainActivity extends AppCompatActivity {
         if (!drama.poster.isEmpty()) loadImage(drama.poster, poster);
 
         card.setOnClickListener(v -> loadEpisodes(drama));
+        card.setContentDescription(drama.title + "，点击查看剧集");
         fav.setOnClickListener(v -> {
             toggleFavorite(drama);
-            fav.setText(isFavorite(drama.id) ? "★" : "☆");
+            boolean favorite = isFavorite(drama.id);
+            fav.setText(favorite ? "★" : "☆");
+            fav.setContentDescription(favorite ? "取消收藏 " + drama.title : "收藏 " + drama.title);
             if ("favorites".equals(currentTab)) renderDramas(loadFavorites());
         });
 
@@ -675,10 +691,13 @@ public class MainActivity extends AppCompatActivity {
                     currentEpisodes.clear();
                     currentEpisodes.addAll(episodes);
                     currentEpisodeIndex = loadResumeEpisodeIndex(drama.id);
-                    if (currentEpisodeIndex < 0 || currentEpisodeIndex >= episodes.size()) currentEpisodeIndex = -1;
-                    setStatus(drama.title + " · " + episodes.size() + " 集");
+                    // A card click should behave like a normal player: start a new drama at
+                    // episode one, or continue the previously watched episode when available.
+                    if (currentEpisodeIndex < 0 || currentEpisodeIndex >= episodes.size()) {
+                        currentEpisodeIndex = 0;
+                    }
                     if (episodes.isEmpty()) Toast.makeText(this, "没有解析到剧集", Toast.LENGTH_SHORT).show();
-                    else showEpisodeDialog();
+                    else playEpisode(currentEpisodeIndex);
                 });
             } catch (Exception e) {
                 main.post(() -> {
@@ -1080,20 +1099,20 @@ public class MainActivity extends AppCompatActivity {
 
         // Episode entries are nested in multiple divs. The old non-greedy div match stopped
         // at the first nested closing tag, so only the first episode was ever available.
-        Pattern links = Pattern.compile("<a\\b[^>]*\\bdata-ep-id=\\\"[^\\\"]*\\\"[^>]*>[\\s\\S]*?</a>",
+        Pattern links = Pattern.compile("<a\\b(?=[^>]*\\bdata-ep-id\\s*=)[^>]*>[\\s\\S]*?</a>",
                 Pattern.CASE_INSENSITIVE);
         Matcher lm = links.matcher(html);
         while (lm.find()) {
             String tag = lm.group();
-            String href = firstGroup(tag, "href=\\\"([^\\\"]+)\\\"");
+            String href = attributeValue(tag, "href");
             if (href.isEmpty()) continue;
-            String ep = firstGroup(tag, "data-ep-id=\\\"([^\\\"]*)\\\"");
+            String ep = attributeValue(tag, "data-ep-id");
             addEpisode(out, seen, ep, href);
         }
 
         if (out.isEmpty()) {
             String fallback = firstGroup(html,
-                    "<a\\b[^>]*class=\\\"[^\\\"]*\\bhg-web-detail__play\\b[^\\\"]*\\\"[^>]*href=\\\"([^\\\"]+)\\\"");
+                    "<a\\b(?=[^>]*\\bclass\\s*=\\s*[\\\"'][^\\\"']*\\bhg-web-detail__play\\b)(?=[^>]*\\bhref\\s*=\\s*[\\\"']([^\\\"']+)[\\\"'])[^>]*>");
             if (!fallback.isEmpty()) addEpisode(out, seen, "1", fallback);
         }
 
@@ -1147,39 +1166,138 @@ public class MainActivity extends AppCompatActivity {
             try {
                 JSONObject release = new JSONObject(httpGetGitHubJson(
                         "https://api.github.com/repos/" + repository + "/releases/latest"));
-                long releaseVersionCode = releaseVersionCode(release.optString("body", ""));
-                if (releaseVersionCode <= installedVersionCode()) {
+                UpdateInfo update = updateInfoFromRelease(release);
+                if (update.versionCode <= 0) {
+                    if (showResult) main.post(() -> Toast.makeText(this,
+                            "最新 Release 缺少版本信息", Toast.LENGTH_SHORT).show());
+                    return;
+                }
+                if (update.versionCode <= installedVersionCode()) {
                     if (showResult) main.post(() -> Toast.makeText(this,
                             "当前已是最新版本", Toast.LENGTH_SHORT).show());
                     return;
                 }
-
-                String apkUrl = "";
-                JSONArray assets = release.optJSONArray("assets");
-                if (assets != null) {
-                    for (int i = 0; i < assets.length(); i++) {
-                        JSONObject asset = assets.optJSONObject(i);
-                        if (asset == null) continue;
-                        if (asset.optString("name", "").endsWith(".apk")) {
-                            apkUrl = asset.optString("browser_download_url", "");
-                            break;
-                        }
-                    }
-                }
-                if (apkUrl.isEmpty()) {
+                if (update.apkUrl.isEmpty()) {
                     if (showResult) main.post(() -> Toast.makeText(this,
                             "最新 Release 未找到 APK", Toast.LENGTH_SHORT).show());
                     return;
                 }
-
-                String versionName = release.optString("tag_name", "新版本");
-                String finalApkUrl = apkUrl;
-                main.post(() -> showUpdateDialog(versionName, releaseVersionCode, finalApkUrl));
+                main.post(() -> showUpdateDialog(update));
             } catch (Exception e) {
                 if (showResult) main.post(() -> Toast.makeText(this,
                         "检查更新失败：" + safeMessage(e), Toast.LENGTH_LONG).show());
             }
         });
+    }
+
+    // New releases publish update.json, while the fallback keeps old releases compatible.
+    private UpdateInfo updateInfoFromRelease(JSONObject release) throws Exception {
+        String defaultName = release.optString("tag_name", "新版本");
+        JSONArray assets = release.optJSONArray("assets");
+        if (assets == null) assets = new JSONArray();
+
+        try {
+            String metadataUrl = findReleaseAssetUrl(assets, "update.json");
+            if (!metadataUrl.isEmpty()) {
+                JSONObject metadata = new JSONObject(httpGetText(metadataUrl, "https://github.com/"));
+                long versionCode = metadata.optLong("versionCode", 0L);
+                String apkName = metadata.optString("apkName", "app-release.apk");
+                String apkUrl = findReleaseAssetUrl(assets, apkName);
+                if (versionCode > 0 && !apkUrl.isEmpty()) {
+                    return new UpdateInfo(metadata.optString("versionName", defaultName), versionCode,
+                            apkUrl, metadata.optString("sha256", ""));
+                }
+            }
+        } catch (Exception ignored) {
+            // A malformed metadata file must not prevent compatibility with older Releases.
+        }
+
+        String apkUrl = "";
+        String shaUrl = "";
+        for (int i = 0; i < assets.length(); i++) {
+            JSONObject asset = assets.optJSONObject(i);
+            if (asset == null) continue;
+            String name = asset.optString("name", "");
+            String url = asset.optString("browser_download_url", "");
+            if (name.endsWith(".apk") && apkUrl.isEmpty()) apkUrl = url;
+            if (name.endsWith(".apk.sha256") && shaUrl.isEmpty()) shaUrl = url;
+        }
+        String sha256 = shaUrl.isEmpty() ? "" : sha256FromText(httpGetText(shaUrl, "https://github.com/"));
+        return new UpdateInfo(defaultName, releaseVersionCode(release.optString("body", "")), apkUrl, sha256);
+    }
+
+    private String findReleaseAssetUrl(JSONArray assets, String assetName) {
+        for (int i = 0; i < assets.length(); i++) {
+            JSONObject asset = assets.optJSONObject(i);
+            if (asset != null && assetName.equals(asset.optString("name", ""))) {
+                return asset.optString("browser_download_url", "");
+            }
+        }
+        return "";
+    }
+
+    private String sha256FromText(String text) {
+        Matcher matcher = Pattern.compile("\\b([a-fA-F0-9]{64})\\b").matcher(text == null ? "" : text);
+        return matcher.find() ? matcher.group(1).toLowerCase() : "";
+    }
+
+    private String sha256(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] buffer = new byte[8192];
+        try (FileInputStream input = new FileInputStream(file)) {
+            int count;
+            while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+        }
+        StringBuilder out = new StringBuilder(64);
+        for (byte value : digest.digest()) out.append(String.format("%02x", value & 0xff));
+        return out.toString();
+    }
+
+    private void registerUpdateDownloadReceiver() {
+        ContextCompat.registerReceiver(this, updateDownloadReceiver,
+                new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+                ContextCompat.RECEIVER_NOT_EXPORTED);
+        updateReceiverRegistered = true;
+    }
+
+    private void restorePendingUpdateDownload() {
+        long savedId = getSharedPreferences(PREFS, MODE_PRIVATE).getLong(KEY_UPDATE_DOWNLOAD_ID, -1L);
+        String savedFile = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_UPDATE_FILE, "");
+        if (savedFile == null || savedFile.isEmpty()) return;
+
+        pendingUpdateApk = new File(savedFile);
+        pendingUpdateSha256 = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_UPDATE_SHA256, "");
+        if (savedId < 0) {
+            if (pendingUpdateApk.isFile()) onUpdateDownloadFinished();
+            else clearPendingUpdate(false);
+            return;
+        }
+
+        updateDownloadId = savedId;
+        DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+        try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(savedId))) {
+            if (cursor == null || !cursor.moveToFirst()) {
+                clearPendingUpdate(true);
+                return;
+            }
+            int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+            if (status == DownloadManager.STATUS_SUCCESSFUL) onUpdateDownloadFinished();
+            else if (status == DownloadManager.STATUS_FAILED) clearPendingUpdate(true);
+        } catch (Exception ignored) {
+            // Keep the persisted task. DownloadManager can be queried again on the next launch.
+        }
+    }
+
+    private void clearPendingUpdate(boolean deleteApk) {
+        if (deleteApk && pendingUpdateApk != null && pendingUpdateApk.isFile()) pendingUpdateApk.delete();
+        updateDownloadId = -1L;
+        pendingUpdateApk = null;
+        pendingUpdateSha256 = "";
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .remove(KEY_UPDATE_DOWNLOAD_ID)
+                .remove(KEY_UPDATE_FILE)
+                .remove(KEY_UPDATE_SHA256)
+                .apply();
     }
 
     private long releaseVersionCode(String notes) {
@@ -1205,40 +1323,65 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void showUpdateDialog(String versionName, long versionCode, String apkUrl) {
+    private void showUpdateDialog(UpdateInfo update) {
         if (isFinishing() || isDestroyed()) return;
         new AlertDialog.Builder(this)
-                .setTitle("发现新版本 " + versionName)
-                .setMessage("已有新版本可用，下载完成后将打开系统安装确认页。")
+                .setTitle("发现新版本 " + update.versionName)
+                .setMessage("已有新版本可用，下载完成后将校验文件完整性并打开系统安装确认页。")
                 .setNegativeButton("稍后再说", null)
-                .setPositiveButton("立即更新", (dialog, which) -> downloadUpdate(apkUrl, versionCode))
+                .setPositiveButton("立即更新", (dialog, which) -> downloadUpdate(update))
                 .show();
     }
 
-    private void downloadUpdate(String apkUrl, long versionCode) {
+    private void downloadUpdate(UpdateInfo update) {
         File downloadDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
         if (downloadDir == null) {
             Toast.makeText(this, "无法创建更新下载目录", Toast.LENGTH_SHORT).show();
             return;
         }
-        pendingUpdateApk = new File(downloadDir, "huangguoplayer-" + versionCode + ".apk");
-        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(apkUrl))
+        pendingUpdateApk = new File(downloadDir, "huangguoplayer-" + update.versionCode + ".apk");
+        pendingUpdateSha256 = update.sha256;
+        if (pendingUpdateApk.exists()) pendingUpdateApk.delete();
+        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(update.apkUrl))
                 .setTitle("短剧播放器更新")
                 .setDescription("正在下载新版本")
                 .setMimeType("application/vnd.android.package-archive")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setDestinationUri(Uri.fromFile(pendingUpdateApk));
         updateDownloadId = ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(request);
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putLong(KEY_UPDATE_DOWNLOAD_ID, updateDownloadId)
+                .putString(KEY_UPDATE_FILE, pendingUpdateApk.getAbsolutePath())
+                .putString(KEY_UPDATE_SHA256, pendingUpdateSha256)
+                .apply();
         Toast.makeText(this, "已开始下载更新", Toast.LENGTH_SHORT).show();
     }
 
     private void onUpdateDownloadFinished() {
         updateDownloadId = -1L;
-        if (pendingUpdateApk == null || !pendingUpdateApk.isFile() || pendingUpdateApk.length() == 0) {
-            Toast.makeText(this, "更新下载失败，请稍后重试", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        installUpdateApk(pendingUpdateApk);
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(KEY_UPDATE_DOWNLOAD_ID).apply();
+        final File apkFile = pendingUpdateApk;
+        final String expectedSha256 = pendingUpdateSha256;
+        io.execute(() -> {
+            if (apkFile == null || !apkFile.isFile() || apkFile.length() == 0) {
+                main.post(() -> {
+                    clearPendingUpdate(true);
+                    Toast.makeText(this, "更新下载失败，请稍后重试", Toast.LENGTH_SHORT).show();
+                });
+                return;
+            }
+            try {
+                if (!expectedSha256.isEmpty() && !expectedSha256.equalsIgnoreCase(sha256(apkFile))) {
+                    throw new IllegalStateException("文件校验失败");
+                }
+                main.post(() -> installUpdateApk(apkFile));
+            } catch (Exception e) {
+                main.post(() -> {
+                    clearPendingUpdate(true);
+                    Toast.makeText(this, "更新文件校验失败，请重新下载", Toast.LENGTH_LONG).show();
+                });
+            }
+        });
     }
 
     private void installUpdateApk(File apkFile) {
@@ -1262,6 +1405,7 @@ public class MainActivity extends AppCompatActivity {
                 .setDataAndType(apkUri, "application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivity(installIntent);
+        clearPendingUpdate(false);
     }
 
     private String httpGetGitHubJson(String url) throws Exception {
@@ -1531,6 +1675,16 @@ public class MainActivity extends AppCompatActivity {
         return m.find() ? m.group(1) : "";
     }
 
+    private String attributeValue(String tag, String name) {
+        String escapedName = Pattern.quote(name);
+        Matcher quoted = Pattern.compile("\\b" + escapedName + "\\s*=\\s*([\\\"'])(.*?)\\1",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(tag);
+        if (quoted.find()) return decodeHtml(quoted.group(2));
+        Matcher unquoted = Pattern.compile("\\b" + escapedName + "\\s*=\\s*([^\\s>]+)",
+                Pattern.CASE_INSENSITIVE).matcher(tag);
+        return unquoted.find() ? decodeHtml(unquoted.group(1)) : "";
+    }
+
     private String stripTags(String text) {
         return decodeHtml(text == null ? "" : text.replaceAll("<[^>]+>", " "))
                 .replaceAll("\\s+", " ").trim();
@@ -1617,7 +1771,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         main.removeCallbacks(progressSaver);
-        unregisterReceiver(updateDownloadReceiver);
+        if (updateReceiverRegistered) unregisterReceiver(updateDownloadReceiver);
         savePlaybackProgress();
         if (player != null) player.release();
         io.shutdownNow();
@@ -1657,6 +1811,20 @@ public class MainActivity extends AppCompatActivity {
             this.name = name;
             this.ep = ep;
             this.url = url;
+        }
+    }
+
+    static class UpdateInfo {
+        final String versionName;
+        final long versionCode;
+        final String apkUrl;
+        final String sha256;
+
+        UpdateInfo(String versionName, long versionCode, String apkUrl, String sha256) {
+            this.versionName = versionName == null || versionName.isEmpty() ? "新版本" : versionName;
+            this.versionCode = versionCode;
+            this.apkUrl = apkUrl == null ? "" : apkUrl;
+            this.sha256 = sha256 == null ? "" : sha256;
         }
     }
 }
