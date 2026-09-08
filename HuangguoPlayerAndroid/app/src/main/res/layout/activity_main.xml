@@ -96,7 +96,6 @@
                     android:layout_weight="1"
                     android:background="@drawable/bg_input"
                     android:hint="输入短剧名称"
-                    android:hintTextColor="#737D8C"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
                     android:singleLine="true"
