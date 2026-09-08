@@ -105,11 +105,6 @@ public class MainActivity extends AppCompatActivity {
 
     private final ExecutorService io = Executors.newFixedThreadPool(4);
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final Runnable hideFullscreenControls = () -> {
-        if (fullscreen) {
-            playerActions2.setVisibility(View.GONE);
-        }
-    };
 
     private LinearLayout topArea;
     private LinearLayout searchArea;
@@ -159,6 +154,11 @@ public class MainActivity extends AppCompatActivity {
     private int searchRequestId = 0;
     private int episodeRequestId = 0;
     private int playbackRequestId = 0;
+    private final Runnable hideFullscreenControls = () -> {
+        if (fullscreen) {
+            playerActions2.setVisibility(View.GONE);
+        }
+    };
 
     // The cache is synchronized by LruCache and capped at 24 MiB to avoid retaining every poster.
     private final LruCache<String, Bitmap> imageCache = new LruCache<String, Bitmap>(24 * 1024) {
