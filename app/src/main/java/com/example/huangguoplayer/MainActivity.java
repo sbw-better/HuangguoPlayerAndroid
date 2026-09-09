@@ -43,6 +43,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
@@ -217,6 +218,7 @@ public class MainActivity extends AppCompatActivity {
         playbackSpeed = getSharedPreferences(PREFS, MODE_PRIVATE).getFloat(KEY_SPEED, 1f);
         setupPlayer();
         setupEvents();
+        setupBackNavigation();
         renderCategories();
         renderSearchHistory();
         styleTabs();
@@ -334,6 +336,21 @@ public class MainActivity extends AppCompatActivity {
         pipButton.setOnClickListener(v -> enterPip());
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
         closePlayerButton.setOnClickListener(v -> closePlayer());
+    }
+
+    private void setupBackNavigation() {
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (fullscreen) {
+                    exitFullscreen();
+                    return;
+                }
+                setEnabled(false);
+                getOnBackPressedDispatcher().onBackPressed();
+                setEnabled(true);
+            }
+        });
     }
 
     private void bindPlayerControllerEpisodeButtons() {
@@ -1773,15 +1790,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         savePlaybackProgress();
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (fullscreen) {
-            exitFullscreen();
-            return;
-        }
-        super.onBackPressed();
     }
 
     @Override

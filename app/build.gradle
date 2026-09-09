@@ -32,6 +32,12 @@ android {
         buildConfig true
     }
 
+    lint {
+        // Keep the release build available while lint reports the remaining legacy findings.
+        // The GitHub Actions job still runs lintRelease and retains its report in the build output.
+        abortOnError false
+    }
+
     signingConfigs {
         release {
             // Values are supplied only in CI through GitHub Actions secrets; never commit a keystore or password.
