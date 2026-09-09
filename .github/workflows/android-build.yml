@@ -178,12 +178,14 @@ jobs:
           # A re-run must reuse its already-created Release rather than failing
           # before it can retry an interrupted attachment upload.
           STATUS=$(curl --silent --show-error --output gitee-release.json --write-out '%{http_code}' \
+            --header "Authorization: Bearer ${GITEE_TOKEN}" \
             --get --data-urlencode "access_token=${GITEE_TOKEN}" "${API}/tags/${TAG}")
           if [ "$STATUS" = "200" ]; then
             RELEASE_ID=$(jq -er '.id' gitee-release.json)
           else
             RESPONSE=$(curl --fail-with-body --silent --show-error \
               --request POST "$API" \
+              --header "Authorization: Bearer ${GITEE_TOKEN}" \
               --form "access_token=${GITEE_TOKEN}" \
               --form "tag_name=${TAG}" \
               --form "name=HuangguoPlayer ${TAG}" \
@@ -197,6 +199,7 @@ jobs:
             # omit its attachment on some API deployments.
             UPLOAD_RESPONSE=$(curl --fail-with-body --silent --show-error \
               --request POST "https://gitee.com/api/v5/repos/sibingwei/huangguoplayer-update/releases/${RELEASE_ID}/attach_files" \
+              --header "Authorization: Bearer ${GITEE_TOKEN}" \
               --form "access_token=${GITEE_TOKEN}" \
               --form "owner=sibingwei" \
               --form "repo=huangguoplayer-update" \
