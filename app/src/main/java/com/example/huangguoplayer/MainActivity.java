@@ -90,7 +90,12 @@ import javax.crypto.spec.SecretKeySpec;
 // 短剧播放器业务类
 public class MainActivity extends AppCompatActivity {
 
-    private static final String SITE = "https://huangguoai.com";
+    private static final String SITE_DIRECTORY = "https://huangguoai.ai";
+    private static final String[] CONTENT_SITE_FALLBACKS = {
+            "https://d2i5ti.yhanwnftm.cc",
+            "https://iov5c.yhanwnftm.cc",
+            "https://h3i46.yhanwnftm.cc"
+    };
     private static final String UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
@@ -107,6 +112,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
     private static final String KEY_UPDATE_FILE = "update_file";
     private static final String KEY_UPDATE_SHA256 = "update_sha256";
+    private static final String KEY_CONTENT_SITE = "content_site";
     private static final int FULLSCREEN_CONTROLS_TIMEOUT_MS = 3000;
     private static final int NORMAL_CONTROLS_TIMEOUT_MS = 5000;
     private static final int COLOR_ACCENT = Color.rgb(217, 154, 69);
@@ -184,6 +190,8 @@ public class MainActivity extends AppCompatActivity {
     private File pendingUpdateApk;
     private String pendingUpdateSha256 = "";
     private boolean updateReceiverRegistered;
+    private volatile String activeContentSite = "";
+    private boolean contentSiteDirectoryChecked;
     private final BroadcastReceiver updateDownloadReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -216,6 +224,8 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         bindViews();
         playbackSpeed = getSharedPreferences(PREFS, MODE_PRIVATE).getFloat(KEY_SPEED, 1f);
+        activeContentSite = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(KEY_CONTENT_SITE, "");
         setupPlayer();
         setupEvents();
         setupBackNavigation();
@@ -485,13 +495,13 @@ public class MainActivity extends AppCompatActivity {
 
         io.execute(() -> {
             try {
-                String url;
+                String path;
                 if ("home".equals(category)) {
-                    url = SITE + "/";
+                    path = "/";
                 } else {
-                    url = SITE + "/" + category + "/" + (page > 1 ? page + "/" : "");
+                    path = "/" + category + "/" + (page > 1 ? page + "/" : "");
                 }
-                String html = httpGetText(url, SITE + "/");
+                String html = getContentPage(path);
                 List<Drama> results;
                 if (category.contains("rank")) results = parseRanks(html);
                 else results = parseGridCards(html, "home".equals(category));
@@ -531,8 +541,8 @@ public class MainActivity extends AppCompatActivity {
 
         io.execute(() -> {
             try {
-                String url = SITE + "/search/video/" + URLEncoder.encode(keyword, StandardCharsets.UTF_8.name()) + "/";
-                String html = httpGetText(url, SITE + "/");
+                String path = "/search/video/" + URLEncoder.encode(keyword, StandardCharsets.UTF_8.name()) + "/";
+                String html = getContentPage(path);
                 List<Drama> results = parseGridCards(html, false);
                 if (results.isEmpty()) results = parseSearchFallback(html);
                 List<Drama> finalResults = results;
@@ -710,7 +720,7 @@ public class MainActivity extends AppCompatActivity {
         setStatus("正在读取：" + drama.title);
         io.execute(() -> {
             try {
-                String html = httpGetText(SITE + "/detail/" + drama.id + "/", SITE + "/");
+                String html = getContentPage("/detail/" + drama.id + "/");
                 List<Episode> episodes = parseEpisodes(html);
                 main.post(() -> {
                     if (requestId != episodeRequestId || currentDrama == null
@@ -796,7 +806,7 @@ public class MainActivity extends AppCompatActivity {
 
         io.execute(() -> {
             try {
-                String html = httpGetText(ep.url, SITE + "/");
+                String html = getEpisodePage(ep.url);
                 String mediaUrl = extractPlayback(html, ep.ep);
                 if (mediaUrl.isEmpty()) throw new IllegalStateException("未解析到播放地址");
                 main.post(() -> {
@@ -816,7 +826,7 @@ public class MainActivity extends AppCompatActivity {
     private void startHls(String mediaUrl, int episodeIndex) {
         currentMediaUrl = mediaUrl;
         Map<String, String> headers = new HashMap<>();
-        headers.put("Referer", SITE + "/");
+        headers.put("Referer", currentContentSite() + "/");
         headers.put("User-Agent", UA);
 
         DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
@@ -1456,6 +1466,55 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private String currentContentSite() {
+        return activeContentSite.isEmpty() ? CONTENT_SITE_FALLBACKS[0] : activeContentSite;
+    }
+
+    private String getContentPage(String path) throws Exception {
+        Exception lastFailure = null;
+        for (String site : contentSiteCandidates()) {
+            try {
+                String html = httpGetText(site + path, site + "/");
+                if (!site.equals(activeContentSite)) {
+                    activeContentSite = site;
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putString(KEY_CONTENT_SITE, site).apply();
+                }
+                return html;
+            } catch (Exception e) {
+                lastFailure = e;
+            }
+        }
+        if (lastFailure != null) throw lastFailure;
+        throw new IllegalStateException("没有可用的内容线路");
+    }
+
+    private List<String> contentSiteCandidates() {
+        LinkedHashMap<String, Boolean> sites = new LinkedHashMap<>();
+        if (!activeContentSite.isEmpty()) sites.put(activeContentSite, true);
+        if (!contentSiteDirectoryChecked) {
+            contentSiteDirectoryChecked = true;
+            try {
+                String directory = httpGetText(SITE_DIRECTORY, SITE_DIRECTORY + "/");
+                Matcher matcher = Pattern.compile("https://[a-z0-9-]+\\.yhanwnftm\\.cc",
+                        Pattern.CASE_INSENSITIVE).matcher(directory);
+                while (matcher.find()) sites.put(matcher.group().toLowerCase(), true);
+            } catch (Exception ignored) {
+                // The directory itself can be temporarily unavailable; use the cached fallbacks below.
+            }
+        }
+        for (String site : CONTENT_SITE_FALLBACKS) sites.put(site, true);
+        return new ArrayList<>(sites.keySet());
+    }
+
+    private String getEpisodePage(String url) throws Exception {
+        URL pageUrl = new URL(url);
+        if (pageUrl.getHost().endsWith(".yhanwnftm.cc")) {
+            return getContentPage(pageUrl.getFile());
+        }
+        return httpGetText(url, currentContentSite() + "/");
+    }
+
     private String httpGetText(String url, String referer) throws Exception {
         HttpURLConnection conn = openConnection(url, referer);
         int code = conn.getResponseCode();
@@ -1493,7 +1552,7 @@ public class MainActivity extends AppCompatActivity {
 
         io.execute(() -> {
             try {
-                HttpURLConnection conn = openConnection(url, SITE + "/");
+                HttpURLConnection conn = openConnection(url, currentContentSite() + "/");
                 conn.setRequestProperty("Accept", "image/avif,image/webp,image/*,*/*;q=0.8");
                 int code = conn.getResponseCode();
                 if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
@@ -1735,7 +1794,7 @@ public class MainActivity extends AppCompatActivity {
     private String absoluteUrl(String value) {
         if (value == null || value.isEmpty()) return "";
         if (value.startsWith("//")) return "https:" + value;
-        if (value.startsWith("/")) return SITE + value;
+        if (value.startsWith("/")) return currentContentSite() + value;
         return value;
     }
 
