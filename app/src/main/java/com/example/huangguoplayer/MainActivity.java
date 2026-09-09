@@ -90,7 +90,7 @@ import java.security.MessageDigest;
 import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-// 短剧播放器业务类
+// 短剧播放器业务类主类
 public class MainActivity extends AppCompatActivity {
 
     private static final String SITE_DIRECTORY = "https://huangguoai.ai";
