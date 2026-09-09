@@ -1203,7 +1203,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void checkForAppUpdate(boolean showResult) {
-        final String repository = BuildConfig.GITEE_UPDATE_REPOSITORY;
+        final String repository = BuildConfig.UPDATE_REPOSITORY;
         if (repository == null || repository.trim().isEmpty()) {
             if (showResult) Toast.makeText(this, "未配置更新仓库", Toast.LENGTH_SHORT).show();
             return;
@@ -1212,10 +1212,9 @@ public class MainActivity extends AppCompatActivity {
 
         io.execute(() -> {
             try {
-                JSONObject release = new JSONObject(httpGetText(
-                        "https://gitee.com/api/v5/repos/" + repository + "/releases/latest",
-                        "https://gitee.com/"));
-                UpdateInfo update = updateInfoFromGiteeRelease(release);
+                JSONObject release = new JSONObject(httpGetGitHubJson(
+                        "https://api.github.com/repos/" + repository + "/releases/latest"));
+                UpdateInfo update = updateInfoFromRelease(release);
                 if (update.versionCode <= 0) {
                     if (showResult) main.post(() -> Toast.makeText(this,
                             "最新 Release 缺少版本信息", Toast.LENGTH_SHORT).show());
@@ -1240,17 +1239,15 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // New releases publish update.json, while the fallback keeps old releases compatible.
-    private UpdateInfo updateInfoFromGiteeRelease(JSONObject release) throws Exception {
+    private UpdateInfo updateInfoFromRelease(JSONObject release) throws Exception {
         String defaultName = release.optString("tag_name", "新版本");
-        JSONArray assets = release.optJSONArray("attach_files");
-        // Keep compatibility with the GitHub asset field for any manually imported release.
-        if (assets == null) assets = release.optJSONArray("assets");
+        JSONArray assets = release.optJSONArray("assets");
         if (assets == null) assets = new JSONArray();
 
         try {
             String metadataUrl = findReleaseAssetUrl(assets, "update.json");
             if (!metadataUrl.isEmpty()) {
-                JSONObject metadata = new JSONObject(httpGetText(metadataUrl, "https://gitee.com/"));
+                JSONObject metadata = new JSONObject(httpGetText(metadataUrl, "https://github.com/"));
                 long versionCode = metadata.optLong("versionCode", 0L);
                 String apkName = metadata.optString("apkName", "app-release.apk");
                 String apkUrl = findReleaseAssetUrl(assets, apkName);
@@ -1273,7 +1270,7 @@ public class MainActivity extends AppCompatActivity {
             if (name.endsWith(".apk") && apkUrl.isEmpty()) apkUrl = url;
             if (name.endsWith(".apk.sha256") && shaUrl.isEmpty()) shaUrl = url;
         }
-        String sha256 = shaUrl.isEmpty() ? "" : sha256FromText(httpGetText(shaUrl, "https://gitee.com/"));
+        String sha256 = shaUrl.isEmpty() ? "" : sha256FromText(httpGetText(shaUrl, "https://github.com/"));
         return new UpdateInfo(defaultName, releaseVersionCode(release.optString("body", "")), apkUrl, sha256);
     }
 

@@ -8,10 +8,6 @@ def versionCodeValue = 20_000_000 + ciRunNumber
 // does not expose GITHUB_REPOSITORY to the Gradle process.
 def updateRepository = providers.environmentVariable('GITHUB_REPOSITORY')
         .orElse('sbw-better/HuangguoPlayerAndroid').get()
-// Release artifacts are mirrored to this public Gitee repository for in-app updates
-// on networks where GitHub is unavailable.
-def giteeUpdateRepository = providers.environmentVariable('GITEE_UPDATE_REPOSITORY')
-        .orElse('sibingwei/huangguoplayer-update').get()
 def releaseStoreFile = System.getenv('ANDROID_KEYSTORE_PATH')
 def releaseStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
 def releaseKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
@@ -30,7 +26,6 @@ android {
         versionName "2.0.${ciRunNumber}"
         // Filled by GitHub Actions so release builds know where to check for updates.
         buildConfigField 'String', 'UPDATE_REPOSITORY', "\"${updateRepository}\""
-        buildConfigField 'String', 'GITEE_UPDATE_REPOSITORY', "\"${giteeUpdateRepository}\""
     }
 
     buildFeatures {
