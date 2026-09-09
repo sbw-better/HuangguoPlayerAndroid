@@ -1460,12 +1460,12 @@ public class MainActivity extends AppCompatActivity {
         Uri apkUri = FileProvider.getUriForFile(this,
                 getPackageName() + ".fileprovider", apkFile);
         Intent installIntent = new Intent(Intent.ACTION_VIEW)
-                .setDataAndType(apkUri, "application/vnd.android.package-archive")
-                // ClipData is required by some Android/OEM package installers to keep
-                // the FileProvider read grant while their scanner process is started.
-                .setClipData(ClipData.newRawUri("update-apk", apkUri))
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                .setDataAndType(apkUri, "application/vnd.android.package-archive");
+        // ClipData is required by some Android/OEM package installers to keep the
+        // FileProvider read grant while their scanner process is started.
+        installIntent.setClipData(ClipData.newRawUri("update-apk", apkUri));
+        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         startActivity(installIntent);
         clearPendingUpdate(false);
     }
