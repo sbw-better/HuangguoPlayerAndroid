@@ -108,6 +108,7 @@ jobs:
       - name: Publish APK to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: v2.0.${{ github.run_number }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |

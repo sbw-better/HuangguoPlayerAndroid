@@ -50,6 +50,7 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
+import androidx.media3.common.VideoSize;
 import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -105,7 +106,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
     private static final String KEY_UPDATE_FILE = "update_file";
     private static final String KEY_UPDATE_SHA256 = "update_sha256";
-    private static final long FULLSCREEN_CONTROLS_TIMEOUT_MS = 3000L;
+    private static final int FULLSCREEN_CONTROLS_TIMEOUT_MS = 3000;
+    private static final int NORMAL_CONTROLS_TIMEOUT_MS = 5000;
     private static final int COLOR_ACCENT = Color.rgb(217, 154, 69);
     private static final int COLOR_SURFACE = Color.rgb(21, 26, 36);
     private static final int COLOR_SURFACE_ELEVATED = Color.rgb(26, 32, 44);
@@ -144,6 +146,9 @@ public class MainActivity extends AppCompatActivity {
     private Button loadMoreButton;
     private LinearLayout playerPanel;
     private PlayerView playerView;
+    private FrameLayout videoContainer;
+    private Button fullscreenCloseButton;
+    private int orientationBeforeFullscreen;
     private TextView nowPlaying;
     private LinearLayout playerActions1;
     private LinearLayout playerActions2;
@@ -178,11 +183,6 @@ public class MainActivity extends AppCompatActivity {
     private File pendingUpdateApk;
     private String pendingUpdateSha256 = "";
     private boolean updateReceiverRegistered;
-    private final Runnable hideFullscreenControls = () -> {
-        if (fullscreen) {
-            playerActions2.setVisibility(View.GONE);
-        }
-    };
     private final BroadcastReceiver updateDownloadReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -265,6 +265,16 @@ public class MainActivity extends AppCompatActivity {
     private void setupPlayer() {
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
+        videoContainer = findViewById(R.id.videoContainer);
+        fullscreenCloseButton = findViewById(R.id.fullscreenCloseButton);
+        fullscreenCloseButton.setOnClickListener(v -> closePlayer());
+        playerView.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
+            if (fullscreen) {
+                boolean inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode();
+                fullscreenCloseButton.setVisibility(inPip ? View.GONE : visibility);
+                playerActions2.setVisibility(inPip ? View.GONE : visibility);
+            }
+        });
         player.setPlaybackParameters(new PlaybackParameters(playbackSpeed));
         playerView.post(() -> {
             bindPlayerControllerEpisodeButtons();
@@ -280,6 +290,11 @@ public class MainActivity extends AppCompatActivity {
                         && currentEpisodeIndex < currentEpisodes.size() - 1) {
                     playEpisode(currentEpisodeIndex + 1);
                 }
+            }
+
+            @Override
+            public void onVideoSizeChanged(@NonNull VideoSize videoSize) {
+                updateFullscreenOrientation(videoSize);
             }
 
             @Override
@@ -319,11 +334,6 @@ public class MainActivity extends AppCompatActivity {
         pipButton.setOnClickListener(v -> enterPip());
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
         closePlayerButton.setOnClickListener(v -> closePlayer());
-        playerView.setOnClickListener(v -> {
-            if (fullscreen) {
-                toggleFullscreenControls();
-            }
-        });
     }
 
     private void bindPlayerControllerEpisodeButtons() {
@@ -893,7 +903,13 @@ public class MainActivity extends AppCompatActivity {
             nowPlaying.setVisibility(View.GONE);
             playerActions1.setVisibility(View.GONE);
             playerActions2.setVisibility(View.GONE);
-        } else if (!fullscreen) {
+            ((View) nowPlaying.getParent()).setVisibility(View.GONE);
+            fullscreenCloseButton.setVisibility(View.GONE);
+        } else if (fullscreen) {
+            updateFullscreenOrientation(player.getVideoSize());
+            playerView.showController();
+            hideSystemBars();
+        } else {
             restoreNormalUi();
         }
     }
@@ -908,8 +924,9 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "请先播放视频", Toast.LENGTH_SHORT).show();
             return;
         }
+        orientationBeforeFullscreen = getRequestedOrientation();
         fullscreen = true;
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        updateFullscreenOrientation(player.getVideoSize());
         topArea.setVisibility(View.GONE);
         statusText.setVisibility(View.GONE);
         contentScroll.setVisibility(View.GONE);
@@ -926,39 +943,38 @@ public class MainActivity extends AppCompatActivity {
         playerPanel.setLayoutParams(panelLp);
         LinearLayout.LayoutParams videoLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        playerView.setLayoutParams(videoLp);
+        videoContainer.setLayoutParams(videoLp);
+        ((View) nowPlaying.getParent()).setVisibility(View.GONE);
+        playerView.setControllerShowTimeoutMs(FULLSCREEN_CONTROLS_TIMEOUT_MS);
+        playerView.setControllerAutoShow(false);
+        playerView.showController();
+        fullscreenCloseButton.setVisibility(View.VISIBLE);
+        playerActions2.setVisibility(View.VISIBLE);
         hideSystemBars();
     }
 
-    private void toggleFullscreenControls() {
-        if (playerActions2.getVisibility() == View.VISIBLE) {
-            hideFullscreenControls();
-        } else {
-            showFullscreenControls();
-        }
-    }
-
-    private void showFullscreenControls() {
-        if (!fullscreen) return;
-        playerActions2.setVisibility(View.VISIBLE);
-        main.removeCallbacks(hideFullscreenControls);
-        main.postDelayed(hideFullscreenControls, FULLSCREEN_CONTROLS_TIMEOUT_MS);
-    }
-
-    private void hideFullscreenControls() {
-        main.removeCallbacks(hideFullscreenControls);
-        playerActions2.setVisibility(View.GONE);
+    private void updateFullscreenOrientation(VideoSize size) {
+        if (!fullscreen || size.width <= 0 || size.height <= 0
+                || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode())) return;
+        int orientation = size.width * size.pixelWidthHeightRatio > size.height
+                ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                : ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT;
+        if (getRequestedOrientation() != orientation) setRequestedOrientation(orientation);
     }
 
     private void exitFullscreen() {
         fullscreen = false;
-        main.removeCallbacks(hideFullscreenControls);
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        fullscreenCloseButton.setVisibility(View.GONE);
+        playerView.setControllerShowTimeoutMs(NORMAL_CONTROLS_TIMEOUT_MS);
+        playerView.setControllerAutoShow(true);
+        setRequestedOrientation(orientationBeforeFullscreen);
         restoreNormalUi();
         showSystemBars();
     }
 
     private void restoreNormalUi() {
+        ((View) nowPlaying.getParent()).setVisibility(View.VISIBLE);
+        fullscreenCloseButton.setVisibility(View.GONE);
         topArea.setVisibility(View.VISIBLE);
         statusText.setVisibility(View.VISIBLE);
         contentScroll.setVisibility(View.VISIBLE);
@@ -975,7 +991,7 @@ public class MainActivity extends AppCompatActivity {
         playerPanel.setLayoutParams(panelLp);
         LinearLayout.LayoutParams videoLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(220));
-        playerView.setLayoutParams(videoLp);
+        videoContainer.setLayoutParams(videoLp);
     }
 
     @SuppressWarnings("deprecation")
