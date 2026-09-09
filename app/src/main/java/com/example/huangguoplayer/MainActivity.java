@@ -3,6 +3,7 @@ package com.example.huangguoplayer;
 import android.app.PictureInPictureParams;
 import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -1393,7 +1394,12 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle("短剧播放器更新")
                 .setDescription("正在下载新版本")
                 .setMimeType("application/vnd.android.package-archive")
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                // The APK lives in this app's external-files directory.  On some OEM
+                // builds the completed-download notification is opened by the system
+                // downloader, which has no access to that private path and reports
+                // ENOENT while parsing.  The completion receiver below opens it via
+                // FileProvider instead.
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
                 .setDestinationUri(Uri.fromFile(pendingUpdateApk));
         updateDownloadId = ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(request);
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -1432,6 +1438,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void installUpdateApk(File apkFile) {
+        if (apkFile == null || !apkFile.isFile() || apkFile.length() == 0) {
+            clearPendingUpdate(true);
+            Toast.makeText(this, "更新文件不存在，请重新下载", Toast.LENGTH_LONG).show();
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !getPackageManager().canRequestPackageInstalls()) {
             pendingUpdateApk = apkFile;
@@ -1450,7 +1461,11 @@ public class MainActivity extends AppCompatActivity {
                 getPackageName() + ".fileprovider", apkFile);
         Intent installIntent = new Intent(Intent.ACTION_VIEW)
                 .setDataAndType(apkUri, "application/vnd.android.package-archive")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                // ClipData is required by some Android/OEM package installers to keep
+                // the FileProvider read grant while their scanner process is started.
+                .setClipData(ClipData.newRawUri("update-apk", apkUri))
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         startActivity(installIntent);
         clearPendingUpdate(false);
     }
