@@ -174,17 +174,34 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
           TAG="v2.0.${RUN_NUMBER}"
-          RESPONSE=$(curl --fail-with-body --silent --show-error \
-            --request POST "https://gitee.com/api/v5/repos/sibingwei/huangguoplayer-update/releases" \
-            --header "Authorization: Bearer ${GITEE_TOKEN}" \
-            --form "tag_name=${TAG}" \
-            --form "name=HuangguoPlayer ${TAG}" \
-            --form "body=自动构建发布。 versionCode: $((20000000 + RUN_NUMBER))" \
-            --form "target_commitish=master")
-          RELEASE_ID=$(printf '%s' "$RESPONSE" | jq -er '.id')
+          API="https://gitee.com/api/v5/repos/sibingwei/huangguoplayer-update/releases"
+          # A re-run must reuse its already-created Release rather than failing
+          # before it can retry an interrupted attachment upload.
+          STATUS=$(curl --silent --show-error --output gitee-release.json --write-out '%{http_code}' \
+            --get --data-urlencode "access_token=${GITEE_TOKEN}" "${API}/tags/${TAG}")
+          if [ "$STATUS" = "200" ]; then
+            RELEASE_ID=$(jq -er '.id' gitee-release.json)
+          else
+            RESPONSE=$(curl --fail-with-body --silent --show-error \
+              --request POST "$API" \
+              --form "access_token=${GITEE_TOKEN}" \
+              --form "tag_name=${TAG}" \
+              --form "name=HuangguoPlayer ${TAG}" \
+              --form "body=自动构建发布。 versionCode: $((20000000 + RUN_NUMBER))" \
+              --form "target_commitish=master")
+            RELEASE_ID=$(printf '%s' "$RESPONSE" | jq -er '.id')
+          fi
           for file in app-release.apk app-release.apk.sha256 update.json; do
-            curl --fail-with-body --silent --show-error \
+            # Gitee's multipart endpoint requires access_token in the form body;
+            # an Authorization header alone can create a Release but may silently
+            # omit its attachment on some API deployments.
+            UPLOAD_RESPONSE=$(curl --fail-with-body --silent --show-error \
               --request POST "https://gitee.com/api/v5/repos/sibingwei/huangguoplayer-update/releases/${RELEASE_ID}/attach_files" \
-              --header "Authorization: Bearer ${GITEE_TOKEN}" \
+              --form "access_token=${GITEE_TOKEN}" \
+              --form "owner=sibingwei" \
+              --form "repo=huangguoplayer-update" \
+              --form "release_id=${RELEASE_ID}" \
               --form "file=@release/${file}"
+            )
+            printf '%s' "$UPLOAD_RESPONSE" | jq -er '.browser_download_url' >/dev/null
           done
