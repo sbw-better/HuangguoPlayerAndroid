@@ -28,8 +28,8 @@ function run(overrides = {}) {
     Upload: [201, { browser_download_url: 'https://gitee.com/test/asset' }],
     Verify: [200, release], ...overrides
   };
-  const cases = Object.entries(responses).map(([stage, [status, json]]) =>
-    `${stage}*) printf '%s' ${quote(JSON.stringify(json))} > "$output"; printf '%s' ${quote(status)} ;;`).join('\n');
+  const cases = Object.entries(responses).map(([stage, [status, json, exitCode = 0]]) =>
+    `${stage}*) printf '%s' ${quote(JSON.stringify(json))} > "$output"; printf '%s' ${quote(status)}; return ${exitCode} ;;`).join('\n');
   const preamble = `
     jq() { command ${quote(bashPath(process.env.JQ_EXE || 'jq'))} "$@"; }
     curl() {
@@ -108,4 +108,12 @@ test('a missing published attachment cannot report success', () => {
   assert.notEqual(r.status, 0);
   assert.match(r.summary, /Verify published attachments/);
   assert.doesNotMatch(r.summary, /verified all three/);
+});
+test('a stalled upload reports the timeout and stops without retrying the POST', () => {
+  const r = run({ Upload: [0, null, 28] });
+  assert.notEqual(r.status, 0);
+  assert.match(r.summary, /Upload app-release.apk: curl exit 28/);
+  assert.match(r.stdout, /timeout 300s/);
+  assert.equal((r.calls.match(/Upload /g) || []).length, 1);
+  assert.doesNotMatch(r.calls, /Verify/);
 });
