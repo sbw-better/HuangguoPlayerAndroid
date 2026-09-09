@@ -46,6 +46,12 @@ function Get-GiteeRelease {
         $result = Invoke-RestMethod -Method Get `
             -Uri "$Api/tags/$([uri]::EscapeDataString($ReleaseTag))" `
             -Headers @{ Authorization = "Bearer $AccessToken"; 'User-Agent' = 'HuangguoPlayer-Gitee-Sync' }
+        # Gitee returns the literal JSON value `null` (HTTP 200) for a tag that
+        # does not have a Release yet. PowerShell exposes that response as the
+        # string "null", rather than $null.
+        if ($result -is [string] -and $result.Trim().Equals('null', [StringComparison]::OrdinalIgnoreCase)) {
+            return $null
+        }
         return $result
     } catch {
         $response = $_.Exception.Response
