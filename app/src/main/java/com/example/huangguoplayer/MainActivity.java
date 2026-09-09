@@ -76,6 +76,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -91,6 +92,10 @@ import javax.crypto.spec.SecretKeySpec;
 public class MainActivity extends AppCompatActivity {
 
     private static final String SITE_DIRECTORY = "https://huangguoai.ai";
+    // The main domain remains the most reliable search endpoint.  The rotating content
+    // mirrors below can serve detail and category pages, but some of them rewrite an
+    // unsupported search URL to their home page with HTTP 200.
+    private static final String SEARCH_SITE = "https://huangguoai.com";
     private static final String[] CONTENT_SITE_FALLBACKS = {
             "https://d2i5ti.yhanwnftm.cc",
             "https://iov5c.yhanwnftm.cc",
@@ -544,11 +549,7 @@ public class MainActivity extends AppCompatActivity {
 
         io.execute(() -> {
             try {
-                String path = "/search/video/" + URLEncoder.encode(keyword, StandardCharsets.UTF_8.name()) + "/";
-                String html = getContentPage(path);
-                List<Drama> results = parseGridCards(html, false);
-                if (results.isEmpty()) results = parseSearchFallback(html);
-                List<Drama> finalResults = results;
+                List<Drama> finalResults = getSearchResults(keyword);
                 main.post(() -> {
                     if (requestId != searchRequestId) return;
                     lastSearch.clear();
@@ -1490,6 +1491,62 @@ public class MainActivity extends AppCompatActivity {
         }
         if (lastFailure != null) throw lastFailure;
         throw new IllegalStateException("没有可用的内容线路");
+    }
+
+    /**
+     * A content mirror can return its home page for every unknown path while still
+     * returning HTTP 200.  Do not let those home-page cards become search results.
+     * Try the known search origin first, then the current content candidates, and
+     * accept a response only when at least one parsed title matches the query.
+     */
+    private List<Drama> getSearchResults(String keyword) throws Exception {
+        String path = "/search/video/" + URLEncoder.encode(keyword, StandardCharsets.UTF_8.name()) + "/";
+        Exception lastFailure = null;
+        for (String site : searchSiteCandidates()) {
+            try {
+                String html = httpGetText(site + path, site + "/");
+                List<Drama> results = parseGridCards(html, false);
+                if (results.isEmpty()) results = parseSearchFallback(html);
+                List<Drama> related = filterSearchResults(results, keyword);
+                if (related.isEmpty()) continue;
+
+                if (!site.equals(activeContentSite)) {
+                    activeContentSite = site;
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putString(KEY_CONTENT_SITE, site).apply();
+                }
+                return related;
+            } catch (Exception e) {
+                lastFailure = e;
+            }
+        }
+
+        // An HTTP-successful page with no matching titles is treated as no result,
+        // rather than exposing unrelated recommendation/home-page content.
+        if (lastFailure == null) return new ArrayList<>();
+        throw lastFailure;
+    }
+
+    private List<String> searchSiteCandidates() {
+        LinkedHashMap<String, Boolean> sites = new LinkedHashMap<>();
+        sites.put(SEARCH_SITE, true);
+        for (String site : contentSiteCandidates()) sites.put(site, true);
+        return new ArrayList<>(sites.keySet());
+    }
+
+    private List<Drama> filterSearchResults(List<Drama> results, String keyword) {
+        List<Drama> related = new ArrayList<>();
+        String query = normalizeSearchText(keyword);
+        if (query.isEmpty()) return related;
+        for (Drama drama : results) {
+            if (normalizeSearchText(drama.title).contains(query)) related.add(drama);
+        }
+        return related;
+    }
+
+    private String normalizeSearchText(String value) {
+        if (value == null) return "";
+        return value.toLowerCase(Locale.ROOT).replaceAll("[\\s\\p{P}\\p{S}]+", "");
     }
 
     private List<String> contentSiteCandidates() {
