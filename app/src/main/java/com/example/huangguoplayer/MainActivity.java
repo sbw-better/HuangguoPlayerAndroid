@@ -512,7 +512,10 @@ public class MainActivity extends AppCompatActivity {
                     appendUnique(displayed, results);
                     setStatus(results.isEmpty() && page == 1 ? "没有找到内容" : "已加载 " + displayed.size() + " 项");
                     renderDramas(displayed);
-                    boolean canPage = !"home".equals(category) && !results.isEmpty();
+                    // Ranking pages are a single list; the site has no /ranks/hot/2/ route.
+                    boolean canPage = !"home".equals(category)
+                            && !category.contains("rank")
+                            && !results.isEmpty();
                     loadMoreButton.setVisibility(canPage ? View.VISIBLE : View.GONE);
                     loadMoreButton.setEnabled(true);
                 });
