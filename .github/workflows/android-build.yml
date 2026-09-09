@@ -119,3 +119,72 @@ jobs:
             release/update.json \
             --title "HuangguoPlayer $RELEASE_TAG" \
             --notes "自动构建发布。 versionCode: $VERSION_CODE"
+
+  gitee-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download signed APK
+        uses: actions/download-artifact@v6
+        with:
+          name: HuangguoPlayer-release-apk
+          path: release
+
+      - name: Check Gitee publishing configuration
+        id: gitee-config
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          if [ -n "$GITEE_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GITEE_TOKEN is not configured; skipping Gitee publishing."
+          fi
+
+      # The user-created repository starts empty. Create its master branch once so
+      # Gitee has a target commit for release tags; later runs leave it untouched.
+      - name: Initialize Gitee update repository
+        if: steps.gitee-config.outputs.enabled == 'true'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          git init gitee-bootstrap
+          cd gitee-bootstrap
+          git config user.name "HuangguoPlayer Release Bot"
+          git config user.email "actions@github.com"
+          git remote add origin "https://oauth2:${GITEE_TOKEN}@gitee.com/sibingwei/huangguoplayer-update.git"
+          if git ls-remote --exit-code origin refs/heads/master; then
+            exit 0
+          fi
+          printf '%s\n' '# HuangguoPlayer Update Channel' > README.md
+          printf '%s\n' 'This repository is maintained automatically by GitHub Actions.' >> README.md
+          git add README.md
+          git commit -m "Initialize update channel"
+          git branch -M master
+          git push -u origin master
+
+      - name: Publish Gitee release assets
+        if: steps.gitee-config.outputs.enabled == 'true'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          TAG="v2.0.${RUN_NUMBER}"
+          RESPONSE=$(curl --fail-with-body --silent --show-error \
+            --request POST "https://gitee.com/api/v5/repos/sibingwei/huangguoplayer-update/releases" \
+            --header "Authorization: Bearer ${GITEE_TOKEN}" \
+            --form "tag_name=${TAG}" \
+            --form "name=HuangguoPlayer ${TAG}" \
+            --form "body=自动构建发布。 versionCode: $((20000000 + RUN_NUMBER))" \
+            --form "target_commitish=master")
+          RELEASE_ID=$(printf '%s' "$RESPONSE" | jq -er '.id')
+          for file in app-release.apk app-release.apk.sha256 update.json; do
+            curl --fail-with-body --silent --show-error \
+              --request POST "https://gitee.com/api/v5/repos/sibingwei/huangguoplayer-update/releases/${RELEASE_ID}/attach_files" \
+              --header "Authorization: Bearer ${GITEE_TOKEN}" \
+              --form "file=@release/${file}"
+          done
