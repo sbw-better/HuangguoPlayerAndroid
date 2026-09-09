@@ -164,8 +164,22 @@ Workflow 使用 JDK 17、Android SDK 36、Build Tools 36.0.0、Gradle 9.6.0，�
 2. 上传临时构建产物；
 3. 创建一个 GitHub Release，并附上 APK、SHA256 文件与 `update.json` 更新元数据。
 
-应用每次冷启动时都会检查最新 Release。新版本优先读取结构化的 `update.json`，旧版本仍兼容 Release 文案中的 `versionCode`；下载完成后会校验 APK 的 SHA-256，再打开 Android 系统安装确认页。下载任务会被保存，应用在下载期间被关闭后重新打开也能继续处理。
+GitHub Actions 只负责构建并发布 GitHub Release。为避免 GitHub 云端执行器上传 Gitee 的跨境网络瓶颈，请在电脑上运行 [`scripts/sync-github-release-to-gitee.ps1`](scripts/sync-github-release-to-gitee.ps1)，它会下载最新的 GitHub Release 并从本机上传到 Gitee。应用每次冷启动时会检查 Gitee 的最新 Release；新版本优先读取结构化的 `update.json`，旧版本仍兼容 Release 文案中的 `versionCode`；下载完成后会校验 APK 的 SHA-256，再打开 Android 系统安装确认页。
 
-首次安装带有此功能的版本仍需手动下载并安装。之后的版本才会出现应用内更新提示。更新依赖 GitHub 的公开 Release：仓库必须是公开仓库；若改为私有仓库，请改用自己的公开更新服务器，不能把 GitHub 访问令牌放进 APK。
+### 本机一键同步到 Gitee
+
+先把 Gitee 的仓库级个人令牌保存为当前用户环境变量（令牌只需要 `projects` 权限）：
+
+```powershell
+setx GITEE_TOKEN "你的 Gitee 令牌"
+```
+
+关闭并重新打开 PowerShell，然后在项目根目录运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\sync-github-release-to-gitee.ps1
+```
+
+脚本默认同步最新 GitHub Release；若需同步指定版本，传入标签，例如 `-Tag v2.0.26`。电脑需要能访问 GitHub（可开 VPN），但手机随后从 Gitee 下载更新时不需要 VPN。首次安装带有此功能的版本仍需手动下载并安装；之后的版本才会出现应用内更新提示。
 
 Android 不允许普通应用静默安装更新。首次更新时，系统会要求授权“允许此应用安装未知应用”，之后仍需要在系统安装页确认。

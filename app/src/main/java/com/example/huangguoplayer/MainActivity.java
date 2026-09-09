@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.Cursor;
 import android.content.pm.ActivityInfo;
+import android.content.pm.ResolveInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -117,6 +118,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_SPEED = "playback_speed";
     private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
     private static final String KEY_UPDATE_FILE = "update_file";
+    private static final String KEY_UPDATE_FILE_URI = "update_file_uri";
     private static final String KEY_UPDATE_SHA256 = "update_sha256";
     private static final String KEY_CONTENT_SITE = "content_site";
     private static final int FULLSCREEN_CONTROLS_TIMEOUT_MS = 3000;
@@ -194,6 +196,7 @@ public class MainActivity extends AppCompatActivity {
     private int playbackRequestId = 0;
     private long updateDownloadId = -1L;
     private File pendingUpdateApk;
+    private Uri pendingUpdateUri;
     private String pendingUpdateSha256 = "";
     private boolean updateReceiverRegistered;
     private volatile String activeContentSite = "";
@@ -1203,7 +1206,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void checkForAppUpdate(boolean showResult) {
-        final String repository = BuildConfig.UPDATE_REPOSITORY;
+        final String repository = BuildConfig.GITEE_UPDATE_REPOSITORY;
         if (repository == null || repository.trim().isEmpty()) {
             if (showResult) Toast.makeText(this, "未配置更新仓库", Toast.LENGTH_SHORT).show();
             return;
@@ -1212,9 +1215,10 @@ public class MainActivity extends AppCompatActivity {
 
         io.execute(() -> {
             try {
-                JSONObject release = new JSONObject(httpGetGitHubJson(
-                        "https://api.github.com/repos/" + repository + "/releases/latest"));
-                UpdateInfo update = updateInfoFromRelease(release);
+                JSONObject release = new JSONObject(httpGetText(
+                        "https://gitee.com/api/v5/repos/" + repository + "/releases/latest",
+                        "https://gitee.com/"));
+                UpdateInfo update = updateInfoFromGiteeRelease(release);
                 if (update.versionCode <= 0) {
                     if (showResult) main.post(() -> Toast.makeText(this,
                             "最新 Release 缺少版本信息", Toast.LENGTH_SHORT).show());
@@ -1239,15 +1243,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // New releases publish update.json, while the fallback keeps old releases compatible.
-    private UpdateInfo updateInfoFromRelease(JSONObject release) throws Exception {
+    private UpdateInfo updateInfoFromGiteeRelease(JSONObject release) throws Exception {
         String defaultName = release.optString("tag_name", "新版本");
-        JSONArray assets = release.optJSONArray("assets");
+        JSONArray assets = release.optJSONArray("attach_files");
+        if (assets == null) assets = release.optJSONArray("assets");
         if (assets == null) assets = new JSONArray();
 
         try {
             String metadataUrl = findReleaseAssetUrl(assets, "update.json");
             if (!metadataUrl.isEmpty()) {
-                JSONObject metadata = new JSONObject(httpGetText(metadataUrl, "https://github.com/"));
+                JSONObject metadata = new JSONObject(httpGetText(metadataUrl, "https://gitee.com/"));
                 long versionCode = metadata.optLong("versionCode", 0L);
                 String apkName = metadata.optString("apkName", "app-release.apk");
                 String apkUrl = findReleaseAssetUrl(assets, apkName);
@@ -1270,7 +1275,7 @@ public class MainActivity extends AppCompatActivity {
             if (name.endsWith(".apk") && apkUrl.isEmpty()) apkUrl = url;
             if (name.endsWith(".apk.sha256") && shaUrl.isEmpty()) shaUrl = url;
         }
-        String sha256 = shaUrl.isEmpty() ? "" : sha256FromText(httpGetText(shaUrl, "https://github.com/"));
+        String sha256 = shaUrl.isEmpty() ? "" : sha256FromText(httpGetText(shaUrl, "https://gitee.com/"));
         return new UpdateInfo(defaultName, releaseVersionCode(release.optString("body", "")), apkUrl, sha256);
     }
 
@@ -1315,8 +1320,14 @@ public class MainActivity extends AppCompatActivity {
 
         pendingUpdateApk = new File(savedFile);
         pendingUpdateSha256 = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_UPDATE_SHA256, "");
+        String savedUri = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_UPDATE_FILE_URI, "");
+        try {
+            pendingUpdateUri = savedUri == null || savedUri.isEmpty() ? null : Uri.parse(savedUri);
+        } catch (Exception ignored) {
+            pendingUpdateUri = null;
+        }
         if (savedId < 0) {
-            if (pendingUpdateApk.isFile()) onUpdateDownloadFinished();
+            if (pendingUpdateApk.isFile()) installUpdateApk(pendingUpdateApk, pendingUpdateUri);
             else clearPendingUpdate(false);
             return;
         }
@@ -1340,10 +1351,12 @@ public class MainActivity extends AppCompatActivity {
         if (deleteApk && pendingUpdateApk != null && pendingUpdateApk.isFile()) pendingUpdateApk.delete();
         updateDownloadId = -1L;
         pendingUpdateApk = null;
+        pendingUpdateUri = null;
         pendingUpdateSha256 = "";
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .remove(KEY_UPDATE_DOWNLOAD_ID)
                 .remove(KEY_UPDATE_FILE)
+                .remove(KEY_UPDATE_FILE_URI)
                 .remove(KEY_UPDATE_SHA256)
                 .apply();
     }
@@ -1388,6 +1401,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         pendingUpdateApk = new File(downloadDir, "huangguoplayer-" + update.versionCode + ".apk");
+        pendingUpdateUri = null;
         pendingUpdateSha256 = update.sha256;
         if (pendingUpdateApk.exists()) pendingUpdateApk.delete();
         DownloadManager.Request request = new DownloadManager.Request(Uri.parse(update.apkUrl))
@@ -1405,16 +1419,31 @@ public class MainActivity extends AppCompatActivity {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putLong(KEY_UPDATE_DOWNLOAD_ID, updateDownloadId)
                 .putString(KEY_UPDATE_FILE, pendingUpdateApk.getAbsolutePath())
+                .remove(KEY_UPDATE_FILE_URI)
                 .putString(KEY_UPDATE_SHA256, pendingUpdateSha256)
                 .apply();
         Toast.makeText(this, "已开始下载更新", Toast.LENGTH_SHORT).show();
     }
 
     private void onUpdateDownloadFinished() {
+        long completedDownloadId = updateDownloadId;
+        Uri completedDownloadUri = null;
+        try {
+            completedDownloadUri = ((DownloadManager) getSystemService(DOWNLOAD_SERVICE))
+                    .getUriForDownloadedFile(completedDownloadId);
+        } catch (Exception ignored) {
+            // FileProvider remains as a compatibility fallback below.
+        }
         updateDownloadId = -1L;
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(KEY_UPDATE_DOWNLOAD_ID).apply();
+        pendingUpdateUri = completedDownloadUri;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .remove(KEY_UPDATE_DOWNLOAD_ID)
+                .putString(KEY_UPDATE_FILE_URI,
+                        completedDownloadUri == null ? "" : completedDownloadUri.toString())
+                .apply();
         final File apkFile = pendingUpdateApk;
         final String expectedSha256 = pendingUpdateSha256;
+        final Uri apkUri = completedDownloadUri;
         io.execute(() -> {
             if (apkFile == null || !apkFile.isFile() || apkFile.length() == 0) {
                 main.post(() -> {
@@ -1427,7 +1456,7 @@ public class MainActivity extends AppCompatActivity {
                 if (!expectedSha256.isEmpty() && !expectedSha256.equalsIgnoreCase(sha256(apkFile))) {
                     throw new IllegalStateException("文件校验失败");
                 }
-                main.post(() -> installUpdateApk(apkFile));
+                main.post(() -> installUpdateApk(apkFile, apkUri));
             } catch (Exception e) {
                 main.post(() -> {
                     clearPendingUpdate(true);
@@ -1437,7 +1466,7 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void installUpdateApk(File apkFile) {
+    private void installUpdateApk(File apkFile, Uri downloadedUri) {
         if (apkFile == null || !apkFile.isFile() || apkFile.length() == 0) {
             clearPendingUpdate(true);
             Toast.makeText(this, "更新文件不存在，请重新下载", Toast.LENGTH_LONG).show();
@@ -1446,6 +1475,7 @@ public class MainActivity extends AppCompatActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !getPackageManager().canRequestPackageInstalls()) {
             pendingUpdateApk = apkFile;
+            pendingUpdateUri = downloadedUri;
             new AlertDialog.Builder(this)
                     .setTitle("允许安装更新")
                     .setMessage("请允许“短剧播放器”安装未知来源应用，随后会自动打开安装确认页。")
@@ -1457,16 +1487,36 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        Uri apkUri = FileProvider.getUriForFile(this,
-                getPackageName() + ".fileprovider", apkFile);
+        // Prefer the DownloadManager URI. It is owned by the system Downloads
+        // provider, avoiding OEM installer scanners reopening an app-private path.
+        Uri apkUri = downloadedUri;
+        if (apkUri == null) {
+            apkUri = FileProvider.getUriForFile(this,
+                    getPackageName() + ".fileprovider", apkFile);
+        }
         Intent installIntent = new Intent(Intent.ACTION_VIEW)
                 .setDataAndType(apkUri, "application/vnd.android.package-archive");
         // ClipData is required by some Android/OEM package installers to keep the
         // FileProvider read grant while their scanner process is started.
         installIntent.setClipData(ClipData.newRawUri("update-apk", apkUri));
-        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-        startActivity(installIntent);
+        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        for (ResolveInfo handler : getPackageManager().queryIntentActivities(installIntent, 0)) {
+            if (handler.activityInfo != null) {
+                try {
+                    grantUriPermission(handler.activityInfo.packageName, apkUri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (SecurityException ignored) {
+                    // The intent flag above remains available on providers that do
+                    // not allow explicit grants from the caller.
+                }
+            }
+        }
+        try {
+            startActivity(installIntent);
+        } catch (Exception e) {
+            Toast.makeText(this, "无法打开系统安装器，请从下载通知中安装", Toast.LENGTH_LONG).show();
+            return;
+        }
         clearPendingUpdate(false);
     }
 
@@ -1915,8 +1965,10 @@ public class MainActivity extends AppCompatActivity {
                 && pendingUpdateApk != null
                 && getPackageManager().canRequestPackageInstalls()) {
             File apkFile = pendingUpdateApk;
+            Uri apkUri = pendingUpdateUri;
             pendingUpdateApk = null;
-            installUpdateApk(apkFile);
+            pendingUpdateUri = null;
+            installUpdateApk(apkFile, apkUri);
         }
     }
 
