@@ -123,6 +123,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_CONTENT_SITE = "content_site";
     private static final int FULLSCREEN_CONTROLS_TIMEOUT_MS = 3000;
     private static final int NORMAL_CONTROLS_TIMEOUT_MS = 5000;
+    private static final long MAX_UPDATE_APK_BYTES = 64L * 1024L * 1024L;
     private static final int COLOR_ACCENT = Color.rgb(217, 154, 69);
     private static final int COLOR_SURFACE = Color.rgb(21, 26, 36);
     private static final int COLOR_SURFACE_ELEVATED = Color.rgb(26, 32, 44);
@@ -199,6 +200,7 @@ public class MainActivity extends AppCompatActivity {
     private Uri pendingUpdateUri;
     private String pendingUpdateSha256 = "";
     private boolean updateReceiverRegistered;
+    private boolean updateDownloadPreparing;
     private volatile String activeContentSite = "";
     private boolean contentSiteDirectoryChecked;
     private final BroadcastReceiver updateDownloadReceiver = new BroadcastReceiver() {
@@ -1255,10 +1257,11 @@ public class MainActivity extends AppCompatActivity {
                 JSONObject metadata = new JSONObject(httpGetText(metadataUrl, "https://gitee.com/"));
                 long versionCode = metadata.optLong("versionCode", 0L);
                 String apkName = metadata.optString("apkName", "app-release.apk");
-                String apkUrl = findReleaseAssetUrl(assets, apkName);
+                String apkUrl = metadata.optString("apkUrl", findReleaseAssetUrl(assets, apkName));
                 if (versionCode > 0 && !apkUrl.isEmpty()) {
                     return new UpdateInfo(metadata.optString("versionName", defaultName), versionCode,
-                            apkUrl, metadata.optString("sha256", ""));
+                            apkUrl, metadata.optString("sha256", ""),
+                            findReleaseAssetSize(assets, apkName));
                 }
             }
         } catch (Exception ignored) {
@@ -1276,7 +1279,8 @@ public class MainActivity extends AppCompatActivity {
             if (name.endsWith(".apk.sha256") && shaUrl.isEmpty()) shaUrl = url;
         }
         String sha256 = shaUrl.isEmpty() ? "" : sha256FromText(httpGetText(shaUrl, "https://gitee.com/"));
-        return new UpdateInfo(defaultName, releaseVersionCode(release.optString("body", "")), apkUrl, sha256);
+        return new UpdateInfo(defaultName, releaseVersionCode(release.optString("body", "")), apkUrl,
+                sha256, findReleaseAssetSize(assets, "app-release.apk"));
     }
 
     private String findReleaseAssetUrl(JSONArray assets, String assetName) {
@@ -1287,6 +1291,17 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return "";
+    }
+
+    private long findReleaseAssetSize(JSONArray assets, String assetName) {
+        for (int i = 0; i < assets.length(); i++) {
+            JSONObject asset = assets.optJSONObject(i);
+            if (asset != null && assetName.equals(asset.optString("name", ""))) {
+                long size = asset.optLong("size", 0L);
+                return size > 0 ? size : asset.optLong("file_size", 0L);
+            }
+        }
+        return 0L;
     }
 
     private String sha256FromText(String text) {
@@ -1386,15 +1401,42 @@ public class MainActivity extends AppCompatActivity {
 
     private void showUpdateDialog(UpdateInfo update) {
         if (isFinishing() || isDestroyed()) return;
+        String size = update.apkSizeBytes > 0 ? "（约 " + formatFileSize(update.apkSizeBytes) + "）" : "";
         new AlertDialog.Builder(this)
                 .setTitle("发现新版本 " + update.versionName)
-                .setMessage("已有新版本可用，下载完成后将校验文件完整性并打开系统安装确认页。")
+                .setMessage("已有新版本可用" + size + "，下载前将验证文件大小，完成后校验完整性并打开系统安装确认页。")
                 .setNegativeButton("稍后再说", null)
                 .setPositiveButton("立即更新", (dialog, which) -> downloadUpdate(update))
                 .show();
     }
 
     private void downloadUpdate(UpdateInfo update) {
+        if (updateDownloadPreparing || updateDownloadId >= 0) {
+            Toast.makeText(this, "更新包已在下载中", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (update.apkSizeBytes > MAX_UPDATE_APK_BYTES) {
+            Toast.makeText(this, "更新包大小异常，已取消下载", Toast.LENGTH_LONG).show();
+            return;
+        }
+        updateDownloadPreparing = true;
+        Toast.makeText(this, "正在验证更新文件…", Toast.LENGTH_SHORT).show();
+        io.execute(() -> {
+            try {
+                DownloadSource source = verifyUpdateDownload(update);
+                main.post(() -> enqueueUpdateDownload(update, source));
+            } catch (Exception e) {
+                main.post(() -> {
+                    updateDownloadPreparing = false;
+                    Toast.makeText(this, "更新文件异常，已取消下载：" + safeMessage(e),
+                            Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void enqueueUpdateDownload(UpdateInfo update, DownloadSource source) {
+        updateDownloadPreparing = false;
         File downloadDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
         if (downloadDir == null) {
             Toast.makeText(this, "无法创建更新下载目录", Toast.LENGTH_SHORT).show();
@@ -1404,9 +1446,9 @@ public class MainActivity extends AppCompatActivity {
         pendingUpdateUri = null;
         pendingUpdateSha256 = update.sha256;
         if (pendingUpdateApk.exists()) pendingUpdateApk.delete();
-        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(update.apkUrl))
+        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(source.url))
                 .setTitle("短剧播放器更新")
-                .setDescription("正在下载新版本")
+                .setDescription("正在下载新版本（" + formatFileSize(source.sizeBytes) + "）")
                 .setMimeType("application/vnd.android.package-archive")
                 // The APK lives in this app's external-files directory.  On some OEM
                 // builds the completed-download notification is opened by the system
@@ -1423,6 +1465,56 @@ public class MainActivity extends AppCompatActivity {
                 .putString(KEY_UPDATE_SHA256, pendingUpdateSha256)
                 .apply();
         Toast.makeText(this, "已开始下载更新", Toast.LENGTH_SHORT).show();
+    }
+
+    private DownloadSource verifyUpdateDownload(UpdateInfo update) throws Exception {
+        HttpURLConnection connection = openConnection(update.apkUrl, "https://gitee.com/");
+        try {
+            connection.setRequestMethod("HEAD");
+            int responseCode = connection.getResponseCode();
+            long size = responseSize(connection);
+            if (responseCode < 200 || responseCode >= 300 || size <= 0) {
+                connection.disconnect();
+                connection = openConnection(update.apkUrl, "https://gitee.com/");
+                connection.setRequestProperty("Range", "bytes=0-0");
+                responseCode = connection.getResponseCode();
+                size = responseSize(connection);
+            }
+            if (responseCode < 200 || responseCode >= 300) {
+                throw new IllegalStateException("HTTP " + responseCode);
+            }
+            if (size <= 0) throw new IllegalStateException("无法确认更新包大小");
+            if (size > MAX_UPDATE_APK_BYTES) throw new IllegalStateException("更新包大小异常：" + formatFileSize(size));
+            if (update.apkSizeBytes > 0 && size != update.apkSizeBytes) {
+                throw new IllegalStateException("下载大小与发布记录不一致");
+            }
+            String contentType = connection.getContentType();
+            if (contentType != null && contentType.toLowerCase().contains("text/html")) {
+                throw new IllegalStateException("下载链接返回了网页而非安装包");
+            }
+            return new DownloadSource(connection.getURL().toString(), size);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private long responseSize(HttpURLConnection connection) {
+        String contentRange = connection.getHeaderField("Content-Range");
+        if (contentRange != null) {
+            Matcher matcher = Pattern.compile("/(\\d+)$").matcher(contentRange.trim());
+            if (matcher.find()) {
+                try {
+                    return Long.parseLong(matcher.group(1));
+                } catch (NumberFormatException ignored) {
+                    // Fall through to Content-Length.
+                }
+            }
+        }
+        return connection.getContentLengthLong();
+    }
+
+    private String formatFileSize(long sizeBytes) {
+        return String.format("%.1f MB", sizeBytes / (1024d * 1024d));
     }
 
     private void onUpdateDownloadFinished() {
@@ -2029,12 +2121,25 @@ public class MainActivity extends AppCompatActivity {
         final long versionCode;
         final String apkUrl;
         final String sha256;
+        final long apkSizeBytes;
 
-        UpdateInfo(String versionName, long versionCode, String apkUrl, String sha256) {
+        UpdateInfo(String versionName, long versionCode, String apkUrl, String sha256,
+                   long apkSizeBytes) {
             this.versionName = versionName == null || versionName.isEmpty() ? "新版本" : versionName;
             this.versionCode = versionCode;
             this.apkUrl = apkUrl == null ? "" : apkUrl;
             this.sha256 = sha256 == null ? "" : sha256;
+            this.apkSizeBytes = Math.max(0L, apkSizeBytes);
+        }
+    }
+
+    static class DownloadSource {
+        final String url;
+        final long sizeBytes;
+
+        DownloadSource(String url, long sizeBytes) {
+            this.url = url;
+            this.sizeBytes = sizeBytes;
         }
     }
 }

@@ -12,6 +12,7 @@ param(
     [string]$GiteeOwner = 'sibingwei',
     [string]$GiteeRepository = 'huangguoplayer-update',
     [string]$Token = $env:GITEE_TOKEN,
+    [string]$ApkCdnUrl,
     [switch]$KeepDownloadedFiles
 )
 
@@ -119,6 +120,15 @@ try {
     $actualSha256 = (Get-FileHash -LiteralPath (Join-Path $downloadDirectory 'app-release.apk') -Algorithm SHA256).Hash.ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($metadata.sha256) -or $actualSha256 -ne $metadata.sha256.ToLowerInvariant()) {
         throw 'APK SHA-256 does not match update.json; publication was cancelled.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ApkCdnUrl)) {
+        $cdnUri = $null
+        if (-not [Uri]::TryCreate($ApkCdnUrl, [UriKind]::Absolute, [ref]$cdnUri) -or $cdnUri.Scheme -ne 'https') {
+            throw 'ApkCdnUrl must be an absolute HTTPS URL.'
+        }
+        $metadata | Add-Member -NotePropertyName apkUrl -NotePropertyValue $cdnUri.AbsoluteUri -Force
+        [IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json -Compress),
+            [Text.UTF8Encoding]::new($false))
     }
 
     $giteeApi = "https://gitee.com/api/v5/repos/$GiteeOwner/$GiteeRepository/releases"

@@ -182,4 +182,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\sync-github-release-to-gitee.
 
 脚本默认同步最新 GitHub Release；若需同步指定版本，传入标签，例如 `-Tag v2.0.26`。电脑需要能访问 GitHub（可开 VPN），但手机随后从 Gitee 下载更新时不需要 VPN。首次安装带有此功能的版本仍需手动下载并安装；之后的版本才会出现应用内更新提示。
 
+若 Gitee Release 附件下载速度不足，可先把同一份 `app-release.apk` 上传到国内对象存储或 CDN，再通过 `-ApkCdnUrl` 写入更新元数据：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\sync-github-release-to-gitee.ps1 -ApkCdnUrl "https://你的CDN域名/app-release.apk"
+```
+
+应用仍从 Gitee 读取版本与 SHA-256，但会从该 HTTPS CDN 地址下载 APK，并在下载前核对大小、下载后校验 SHA-256。CDN 必须提供同一份 APK，且正确返回 `Content-Length`。
+
 Android 不允许普通应用静默安装更新。首次更新时，系统会要求授权“允许此应用安装未知应用”，之后仍需要在系统安装页确认。
