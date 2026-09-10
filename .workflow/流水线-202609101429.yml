@@ -22,11 +22,13 @@ stages:
         test -n "$(printenv "$name")" || { echo "Missing Gitee Go secret: $name" >&2; exit 1; }
       done
       export RELEASE_BUILD_NUMBER="$(date +%s)"
+      export RELEASE_VERSION_NAME="2.0.30"
       printf "%s" "$ANDROID_KEYSTORE_BASE64" | base64 -d > huangguo-player.jks
       test -s huangguo-player.jks || { echo "Decoded keystore is empty" >&2; exit 1; }
       export ANDROID_KEYSTORE_PATH="$PWD/huangguo-player.jks"
       ./gradlew --no-daemon \
         -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \
+        -PreleaseVersionName="$RELEASE_VERSION_NAME" \
         -PreleaseStoreFile="$ANDROID_KEYSTORE_PATH" \
         -PreleaseStorePassword="$ANDROID_KEYSTORE_PASSWORD" \
         -PreleaseKeyAlias="$ANDROID_KEY_ALIAS" \

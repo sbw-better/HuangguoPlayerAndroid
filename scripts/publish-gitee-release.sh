@@ -15,11 +15,12 @@ apk_path="$apk_dir/app-release.apk"
 
 version_code=$((20000000 + RELEASE_BUILD_NUMBER))
 tag="v2.0.${RELEASE_BUILD_NUMBER}"
+release_version_name="${RELEASE_VERSION_NAME:-2.0.30}"
 sha256=$(sha256sum "$apk_path" | awk '{print $1}')
 printf '%s  %s\n' "$sha256" "app-release.apk" > "$apk_dir/app-release.apk.sha256"
 
-printf '{"versionCode":%s,"versionName":"2.0.%s","apkName":"app-release.apk","sha256":"%s"}\n' \
-  "$version_code" "$RELEASE_BUILD_NUMBER" "$sha256" > "$apk_dir/update.json"
+printf '{"versionCode":%s,"versionName":"%s","apkName":"app-release.apk","sha256":"%s"}\n' \
+  "$version_code" "$release_version_name" "$sha256" > "$apk_dir/update.json"
 
 api="https://gitee.com/api/v5/repos/${GITEE_UPDATE_REPOSITORY}/releases"
 target_branch="${GITEE_TARGET_BRANCH:-main}"
@@ -27,8 +28,8 @@ release_json=$(curl --fail-with-body --silent --show-error --request POST "$api"
   --header "Authorization: Bearer ${GITEE_TOKEN}" \
   --form "access_token=${GITEE_TOKEN}" \
   --form "tag_name=${tag}" \
-  --form "name=HuangguoPlayer ${tag}" \
-  --form "body=自动构建发布。 versionCode: ${version_code}" \
+  --form "name=HuangguoPlayer ${release_version_name}" \
+  --form "body=自动构建发布。 versionName: ${release_version_name}, versionCode: ${version_code}" \
   --form "target_commitish=${target_branch}")
 release_id=$(printf '%s' "$release_json" \
   | grep -oE '"id"[[:space:]]*:[[:space:]]*[0-9]+' \

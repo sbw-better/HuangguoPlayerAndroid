@@ -8,6 +8,9 @@ def releaseBuildNumber = providers.gradleProperty('releaseBuildNumber')
         .orElse(providers.environmentVariable('GITHUB_RUN_NUMBER'))
         .orElse('0').get().toInteger()
 def versionCodeValue = 20_000_000 + releaseBuildNumber
+def releaseVersionName = providers.gradleProperty('releaseVersionName')
+        .orElse(providers.environmentVariable('RELEASE_VERSION_NAME'))
+        .orElse('2.0.30').get()
 // Kept for compatibility with builds that still use GitHub Actions.
 def updateRepository = providers.environmentVariable('GITHUB_REPOSITORY')
         .orElse('sbw-better/HuangguoPlayerAndroid').get()
@@ -39,7 +42,9 @@ android {
         targetSdk 36
         // The release pipeline supplies an ever-increasing number for upgrade compatibility.
         versionCode versionCodeValue
-        versionName "2.0.${releaseBuildNumber}"
+        // Keep the user-facing version readable. The timestamp-based versionCode
+        // still guarantees that every CI build can upgrade the previous one.
+        versionName releaseVersionName
         // Filled by GitHub Actions so release builds know where to check for updates.
         buildConfigField 'String', 'UPDATE_REPOSITORY', "\"${updateRepository}\""
         // Updates are mirrored locally to Gitee after each GitHub Release.
@@ -80,5 +85,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.8.0'
     implementation 'androidx.media3:media3-exoplayer:1.11.0'
     implementation 'androidx.media3:media3-exoplayer-hls:1.11.0'
+    implementation 'androidx.media3:media3-datasource-okhttp:1.11.0'
     implementation 'androidx.media3:media3-ui:1.11.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }

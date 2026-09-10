@@ -55,7 +55,7 @@ import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
 import androidx.media3.common.VideoSize;
 import androidx.media3.datasource.DefaultDataSource;
-import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
 import androidx.media3.ui.PlayerView;
@@ -70,8 +70,10 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -80,8 +82,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -90,6 +94,11 @@ import java.security.MessageDigest;
 import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+
+import okhttp3.Dns;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 // 短剧播放器业务类主类
 public class MainActivity extends AppCompatActivity {
 
@@ -99,12 +108,19 @@ public class MainActivity extends AppCompatActivity {
     // unsupported search URL to their home page with HTTP 200.
     private static final String SEARCH_SITE = "https://huangguoai.com";
     private static final String[] CONTENT_SITE_FALLBACKS = {
-            "https://d2i5ti.yhanwnftm.cc",
-            "https://iov5c.yhanwnftm.cc",
-            "https://h3i46.yhanwnftm.cc"
+            "https://jtre7.bhefwntk.cc",
+            "https://pv9w5.bhefwntk.cc",
+            "https://wd7g.bhefwntk.cc"
     };
     private static final String UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+    private static final OkHttpClient CONTENT_HTTP_CLIENT = new OkHttpClient.Builder()
+            .dns(new TrustedIpv4Dns())
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build();
 
     // 站点前端 crypto-worker.js 使用的 16-byte UTF-8 key/iv。
     private static final String IMG_KEY = "f5d965df75336270";
@@ -839,11 +855,7 @@ public class MainActivity extends AppCompatActivity {
         headers.put("Referer", currentContentSite() + "/");
         headers.put("User-Agent", UA);
 
-        DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
-                .setUserAgent(UA)
-                .setConnectTimeoutMs(15000)
-                .setReadTimeoutMs(20000)
-                .setAllowCrossProtocolRedirects(true)
+        OkHttpDataSource.Factory httpFactory = new OkHttpDataSource.Factory(CONTENT_HTTP_CLIENT)
                 .setDefaultRequestProperties(headers);
 
         DefaultDataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(this, httpFactory);
@@ -1708,41 +1720,44 @@ public class MainActivity extends AppCompatActivity {
 
     private List<String> contentSiteCandidates() {
         LinkedHashMap<String, Boolean> sites = new LinkedHashMap<>();
-        if (!activeContentSite.isEmpty()) sites.put(activeContentSite, true);
         if (!contentSiteDirectoryChecked) {
             contentSiteDirectoryChecked = true;
             try {
                 String directory = httpGetText(SITE_DIRECTORY, SITE_DIRECTORY + "/");
-                Matcher matcher = Pattern.compile("https://[a-z0-9-]+\\.yhanwnftm\\.cc",
+                Matcher matcher = Pattern.compile("data-url=\"(https://[a-z0-9.-]+)\"",
                         Pattern.CASE_INSENSITIVE).matcher(directory);
-                while (matcher.find()) sites.put(matcher.group().toLowerCase(), true);
+                while (matcher.find()) sites.put(matcher.group(1).toLowerCase(), true);
             } catch (Exception ignored) {
                 // The directory itself can be temporarily unavailable; use the cached fallbacks below.
             }
         }
         for (String site : CONTENT_SITE_FALLBACKS) sites.put(site, true);
+        // A previously cached mirror can disappear. Try the freshly published and
+        // bundled lines first so an obsolete cache does not add a 15-second delay.
+        if (!activeContentSite.isEmpty()) sites.put(activeContentSite, true);
         return new ArrayList<>(sites.keySet());
     }
 
     private String getEpisodePage(String url) throws Exception {
         URL pageUrl = new URL(url);
-        if (pageUrl.getHost().endsWith(".yhanwnftm.cc")) {
-            return getContentPage(pageUrl.getFile());
-        }
-        return httpGetText(url, currentContentSite() + "/");
+        // Episode links belong to a rotating mirror. Reuse only their path so the
+        // request can fail over when the mirror changes between list and playback.
+        return getContentPage(pageUrl.getFile());
     }
 
     private String httpGetText(String url, String referer) throws Exception {
-        HttpURLConnection conn = openConnection(url, referer);
-        int code = conn.getResponseCode();
-        if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) sb.append(line).append('\n');
-            return sb.toString();
-        } finally {
-            conn.disconnect();
+        Request request = new Request.Builder()
+                .url(url)
+                .header("User-Agent", UA)
+                .header("Referer", referer)
+                .header("Accept-Language", "zh-CN,zh;q=0.9")
+                .build();
+        try (Response response = CONTENT_HTTP_CLIENT.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IllegalStateException("HTTP " + response.code());
+            }
+            if (response.body() == null) throw new IllegalStateException("服务器返回空内容");
+            return response.body().string();
         }
     }
 
@@ -1769,30 +1784,107 @@ public class MainActivity extends AppCompatActivity {
 
         io.execute(() -> {
             try {
-                HttpURLConnection conn = openConnection(url, currentContentSite() + "/");
-                conn.setRequestProperty("Accept", "image/avif,image/webp,image/*,*/*;q=0.8");
-                int code = conn.getResponseCode();
-                if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
-                try (InputStream in = conn.getInputStream(); ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
-                    byte[] raw = bos.toByteArray();
-                    byte[] decoded = decryptImageIfNeeded(raw);
-                    Bitmap bmp = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
-                    if (bmp == null && decoded != raw) bmp = BitmapFactory.decodeByteArray(raw, 0, raw.length);
-                    if (bmp != null) {
-                        imageCache.put(url, bmp);
-                        Bitmap finalBmp = bmp;
-                        main.post(() -> {
-                            if (url.equals(target.getTag())) target.setImageBitmap(finalBmp);
-                        });
+                Request request = new Request.Builder()
+                        .url(url)
+                        .header("User-Agent", UA)
+                        .header("Referer", currentContentSite() + "/")
+                        .header("Accept", "image/avif,image/webp,image/*,*/*;q=0.8")
+                        .build();
+                try (Response response = CONTENT_HTTP_CLIENT.newCall(request).execute()) {
+                    if (!response.isSuccessful()) {
+                        throw new IllegalStateException("HTTP " + response.code());
                     }
-                } finally {
-                    conn.disconnect();
+                    if (response.body() == null) throw new IllegalStateException("服务器返回空图片");
+                    try (InputStream in = response.body().byteStream(); ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+                        byte[] raw = bos.toByteArray();
+                        byte[] decoded = decryptImageIfNeeded(raw);
+                        Bitmap bmp = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
+                        if (bmp == null && decoded != raw) {
+                            bmp = BitmapFactory.decodeByteArray(raw, 0, raw.length);
+                        }
+                        if (bmp != null) {
+                            imageCache.put(url, bmp);
+                            Bitmap finalBmp = bmp;
+                            main.post(() -> {
+                                if (url.equals(target.getTag())) target.setImageBitmap(finalBmp);
+                            });
+                        }
+                    }
                 }
             } catch (Exception ignored) { }
         });
+    }
+
+    /**
+     * Some mainland mobile networks return poisoned A/AAAA records for the rotating
+     * content mirrors. Resolve IPv4 records through DNSPod DoH and cache them; if
+     * DoH is temporarily unavailable, retain Android's normal DNS as a fallback.
+     */
+    private static final class TrustedIpv4Dns implements Dns {
+        private static final long CACHE_MILLIS = TimeUnit.MINUTES.toMillis(10);
+        private final ConcurrentHashMap<String, DnsCacheEntry> cache = new ConcurrentHashMap<>();
+
+        @Override
+        public List<InetAddress> lookup(String hostname) throws UnknownHostException {
+            long now = System.currentTimeMillis();
+            DnsCacheEntry cached = cache.get(hostname);
+            if (cached != null && now < cached.expiresAt) return cached.addresses;
+
+            List<InetAddress> resolved = resolveWithDnsPod(hostname);
+            if (resolved.isEmpty()) resolved = Dns.SYSTEM.lookup(hostname);
+            cache.put(hostname, new DnsCacheEntry(resolved, now + CACHE_MILLIS));
+            return resolved;
+        }
+
+        private List<InetAddress> resolveWithDnsPod(String hostname) {
+            List<InetAddress> addresses = new ArrayList<>();
+            HttpURLConnection connection = null;
+            try {
+                String encodedHost = URLEncoder.encode(hostname, StandardCharsets.UTF_8.name());
+                URL endpoint = new URL("https://doh.pub/resolve?name=" + encodedHost + "&type=A");
+                connection = (HttpURLConnection) endpoint.openConnection();
+                connection.setConnectTimeout(5000);
+                connection.setReadTimeout(5000);
+                connection.setRequestProperty("Accept", "application/dns-json");
+                if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) {
+                    return addresses;
+                }
+                StringBuilder json = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                        connection.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) json.append(line);
+                }
+                JSONArray answers = new JSONObject(json.toString()).optJSONArray("Answer");
+                if (answers == null) return addresses;
+                for (int i = 0; i < answers.length(); i++) {
+                    JSONObject answer = answers.optJSONObject(i);
+                    if (answer == null || answer.optInt("type") != 1) continue;
+                    String ip = answer.optString("data");
+                    if (ip.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}")) {
+                        addresses.add(InetAddress.getByName(ip));
+                    }
+                }
+            } catch (Exception ignored) {
+                // Fall through to Android's resolver in lookup().
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+            return addresses;
+        }
+    }
+
+    private static final class DnsCacheEntry {
+        final List<InetAddress> addresses;
+        final long expiresAt;
+
+        DnsCacheEntry(List<InetAddress> addresses, long expiresAt) {
+            this.addresses = addresses;
+            this.expiresAt = expiresAt;
+        }
     }
 
     private byte[] decryptImageIfNeeded(byte[] raw) {
