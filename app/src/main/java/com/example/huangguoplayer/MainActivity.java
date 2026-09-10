@@ -1229,10 +1229,7 @@ public class MainActivity extends AppCompatActivity {
 
         io.execute(() -> {
             try {
-                JSONObject release = new JSONObject(httpGetText(
-                        "https://gitee.com/api/v5/repos/" + repository + "/releases/latest",
-                        "https://gitee.com/"));
-                UpdateInfo update = updateInfoFromGiteeRelease(release);
+                UpdateInfo update = latestUpdateFromGiteeReleasePage(repository.trim());
                 if (update.versionCode <= 0) {
                     if (showResult) main.post(() -> Toast.makeText(this,
                             "最新 Release 缺少版本信息", Toast.LENGTH_SHORT).show());
@@ -1254,6 +1251,33 @@ public class MainActivity extends AppCompatActivity {
                         "检查更新失败：" + safeMessage(e), Toast.LENGTH_LONG).show());
             }
         });
+    }
+
+    /**
+     * The unauthenticated Gitee releases API is aggressively rate limited and can
+     * return HTTP 403 to an entire mobile network. The public releases page and its
+     * attached update.json are not subject to that API quota, so update checks do
+     * not need an embedded access token.
+     */
+    private UpdateInfo latestUpdateFromGiteeReleasePage(String repository) throws Exception {
+        String repositoryUrl = "https://gitee.com/" + repository;
+        String releasesUrl = repositoryUrl + "/releases";
+        String html = httpGetText(releasesUrl, repositoryUrl + "/");
+        Matcher tagMatcher = Pattern.compile(
+                "<div\\s+class=['\"]release-tag-item['\"][^>]*\\bdata-tag=['\"]([^'\"]+)['\"]",
+                Pattern.CASE_INSENSITIVE).matcher(html);
+        if (!tagMatcher.find()) throw new IllegalStateException("未找到最新 Release");
+
+        String tag = tagMatcher.group(1);
+        String encodedTag = URLEncoder.encode(tag, StandardCharsets.UTF_8.name())
+                .replace("+", "%20");
+        String downloadBase = repositoryUrl + "/releases/download/" + encodedTag + "/";
+        JSONObject metadata = new JSONObject(httpGetText(downloadBase + "update.json", releasesUrl));
+        long versionCode = metadata.optLong("versionCode", 0L);
+        String apkName = metadata.optString("apkName", "app-release.apk");
+        String apkUrl = metadata.optString("apkUrl", downloadBase + apkName);
+        return new UpdateInfo(metadata.optString("versionName", tag), versionCode, apkUrl,
+                metadata.optString("sha256", ""), metadata.optLong("apkSizeBytes", 0L));
     }
 
     // New releases publish update.json, while the fallback keeps old releases compatible.

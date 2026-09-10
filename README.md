@@ -158,7 +158,7 @@ Workflow 使用 JDK 17、Android SDK 36、Build Tools 36.0.0、Gradle 9.6.0，�
 
 ## 自动发布与应用内更新
 
-本项目可使用 Gitee 作为唯一的代码仓库、构建平台和更新发布源，不需要在电脑或手机上访问 GitHub。App 每次启动时从 Gitee Release 读取版本、`update.json` 与 SHA-256，下载完成后校验 APK 并打开系统安装确认页。
+本项目可使用 Gitee 作为唯一的代码仓库、构建平台和更新发布源，不需要在电脑或手机上访问 GitHub。App 每次启动时从 Gitee 的公开 Release 页面读取最新版，再获取 `update.json` 与 SHA-256；不调用容易触发 403 限流的匿名 Releases API。下载完成后校验 APK 并打开系统安装确认页。
 
 ### Gitee Go 自动构建与发布
 
