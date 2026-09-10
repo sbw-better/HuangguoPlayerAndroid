@@ -15,7 +15,21 @@ stages:
     buildToolsVersion: 36.1.0
     ndkVersion: 28.2.13676358
     commands:
-    - 'set -e; chmod +x gradlew; for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do test -n "$(printenv "$name")" || { echo "Missing Gitee Go secret: $name" >&2; exit 1; }; done; export RELEASE_BUILD_NUMBER="$(date +%s)"; printf "%s" "$ANDROID_KEYSTORE_BASE64" | base64 -d > huangguo-player.jks; test -s huangguo-player.jks || { echo "Decoded keystore is empty" >&2; exit 1; }; export ANDROID_KEYSTORE_PATH="$PWD/huangguo-player.jks"; ./gradlew --no-daemon -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" -PreleaseStoreFile="$ANDROID_KEYSTORE_PATH" -PreleaseStorePassword="$ANDROID_KEYSTORE_PASSWORD" -PreleaseKeyAlias="$ANDROID_KEY_ALIAS" -PreleaseKeyPassword="$ANDROID_KEY_PASSWORD" clean lintRelease assembleRelease; apk_dir="app/build/outputs/apk/release"; sha256="$(sha256sum "$apk_dir/app-release.apk" | awk "{print \$1}")"; printf "%s  %s\n" "$sha256" "app-release.apk" > "$apk_dir/app-release.apk.sha256"; printf "{\"versionCode\":%s,\"versionName\":\"2.0.%s\",\"apkName\":\"app-release.apk\",\"sha256\":\"%s\"}\n" "$((20000000 + RELEASE_BUILD_NUMBER))" "$RELEASE_BUILD_NUMBER" "$sha256" > "$apk_dir/update.json"'
+    - "set -e; chmod +x gradlew; for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD\
+      \ ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do test -n \"$(printenv \"$name\"\
+      )\" || { echo \"Missing Gitee Go secret: $name\" >&2; exit 1; }; done; export\
+      \ RELEASE_BUILD_NUMBER=\"$(date +%s)\"; printf \"%s\" \"$ANDROID_KEYSTORE_BASE64\"\
+      \ | base64 -d > huangguo-player.jks; test -s huangguo-player.jks || { echo \"\
+      Decoded keystore is empty\" >&2; exit 1; }; export ANDROID_KEYSTORE_PATH=\"\
+      $PWD/huangguo-player.jks\"; ./gradlew --no-daemon -PreleaseBuildNumber=\"$RELEASE_BUILD_NUMBER\"\
+      \ -PreleaseStoreFile=\"$ANDROID_KEYSTORE_PATH\" -PreleaseStorePassword=\"$ANDROID_KEYSTORE_PASSWORD\"\
+      \ -PreleaseKeyAlias=\"$ANDROID_KEY_ALIAS\" -PreleaseKeyPassword=\"$ANDROID_KEY_PASSWORD\"\
+      \ clean lintRelease assembleRelease; apk_dir=\"app/build/outputs/apk/release\"\
+      ; sha256=\"$(sha256sum \"$apk_dir/app-release.apk\" | awk \"{print \\$1}\")\"\
+      ; printf \"%s  %s\\n\" \"$sha256\" \"app-release.apk\" > \"$apk_dir/app-release.apk.sha256\"\
+      ; printf \"{\\\"versionCode\\\":%s,\\\"versionName\\\":\\\"2.0.%s\\\",\\\"apkName\\\
+      \":\\\"app-release.apk\\\",\\\"sha256\\\":\\\"%s\\\"}\\n\" \"$((20000000 + RELEASE_BUILD_NUMBER))\"\
+      \ \"$RELEASE_BUILD_NUMBER\" \"$sha256\" > \"$apk_dir/update.json\""
     artifacts:
     - name: ANDROID_RELEASE
       path:
@@ -64,3 +78,8 @@ triggers:
 notify: []
 variables:
   UPDATE_REPOSITORY: Sibingwei/HuangguoPlayerAndroid
+  global:
+  - ANDROID_KEYSTORE_BASE64
+  - ANDROID_KEYSTORE_PASSWORD
+  - ANDROID_KEY_ALIAS
+  - ANDROID_KEY_PASSWORD
