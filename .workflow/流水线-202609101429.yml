@@ -15,24 +15,7 @@ stages:
     buildToolsVersion: 36.1.0
     ndkVersion: 28.2.13676358
     commands:
-    - set -e
-    - chmod +x gradlew
-    - export RELEASE_BUILD_NUMBER="$(date +%s)"
-    - printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > huangguo-player.jks
-    - export ANDROID_KEYSTORE_PATH="$PWD/huangguo-player.jks"
-    - ""
-    - ./gradlew --no-daemon \
-    - '  -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \'
-    - '  clean lintRelease assembleRelease'
-    - ""
-    - apk_dir="app/build/outputs/apk/release"
-    - "sha256=\"$(sha256sum \"$apk_dir/app-release.apk\" | awk '{print $1}')\""
-    - printf '%s  %s\n' "$sha256" "app-release.apk" > "$apk_dir/app-release.apk.sha256"
-    - "printf '{\"versionCode\":%s,\"versionName\":\"2.0.%s\",\"apkName\":\"app-release.apk\"\
-      ,\"sha256\":\"%s\"}\\n' \\"
-    - '  "$((20000000 + RELEASE_BUILD_NUMBER))" \'
-    - '  "$RELEASE_BUILD_NUMBER" \'
-    - '  "$sha256" > "$apk_dir/update.json"'
+    - 'set -e; chmod +x gradlew; export RELEASE_BUILD_NUMBER="$(date +%s)"; printf "%s" "$ANDROID_KEYSTORE_BASE64" | base64 -d > huangguo-player.jks; ANDROID_KEYSTORE_PATH="$PWD/huangguo-player.jks" ./gradlew --no-daemon -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" clean lintRelease assembleRelease; apk_dir="app/build/outputs/apk/release"; sha256="$(sha256sum "$apk_dir/app-release.apk" | awk "{print \$1}")"; printf "%s  %s\n" "$sha256" "app-release.apk" > "$apk_dir/app-release.apk.sha256"; printf "{\"versionCode\":%s,\"versionName\":\"2.0.%s\",\"apkName\":\"app-release.apk\",\"sha256\":\"%s\"}\n" "$((20000000 + RELEASE_BUILD_NUMBER))" "$RELEASE_BUILD_NUMBER" "$sha256" > "$apk_dir/update.json"'
     artifacts:
     - name: ANDROID_RELEASE
       path:
@@ -45,13 +28,13 @@ stages:
       resource:
         cpu: "2"
         memory: "4"
-- name: 未命名
-  displayName: 未命名
+- name: 发布发行版
+  displayName: 发布发行版
   strategy: naturally
   trigger: auto
   steps:
   - step: release@gitee
-    name: d2054ebd
+    name: publish-gitee-release
     displayName: 发布 Gitee Release
     releaseName: HuangguoPlayer Android
     description: 由 Gitee Go 自动构建的 Android 安装包。
