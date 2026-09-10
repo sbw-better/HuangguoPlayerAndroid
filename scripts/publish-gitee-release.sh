@@ -18,17 +18,8 @@ tag="v2.0.${RELEASE_BUILD_NUMBER}"
 sha256=$(sha256sum "$apk_path" | awk '{print $1}')
 printf '%s  %s\n' "$sha256" "app-release.apk" > "$apk_dir/app-release.apk.sha256"
 
-RELEASE_VERSION_CODE="$version_code" RELEASE_BUILD="$RELEASE_BUILD_NUMBER" RELEASE_SHA256="$sha256" \
-  python3 - <<'PY' > "$apk_dir/update.json"
-import json
-import os
-print(json.dumps({
-    "versionCode": int(os.environ["RELEASE_VERSION_CODE"]),
-    "versionName": "v2.0." + os.environ["RELEASE_BUILD"],
-    "apkName": "app-release.apk",
-    "sha256": os.environ["RELEASE_SHA256"],
-}, separators=(",", ":")))
-PY
+printf '{"versionCode":%s,"versionName":"2.0.%s","apkName":"app-release.apk","sha256":"%s"}\n' \
+  "$version_code" "$RELEASE_BUILD_NUMBER" "$sha256" > "$apk_dir/update.json"
 
 api="https://gitee.com/api/v5/repos/${GITEE_UPDATE_REPOSITORY}/releases"
 target_branch="${GITEE_TARGET_BRANCH:-main}"
@@ -39,7 +30,14 @@ release_json=$(curl --fail-with-body --silent --show-error --request POST "$api"
   --form "name=HuangguoPlayer ${tag}" \
   --form "body=自动构建发布。 versionCode: ${version_code}" \
   --form "target_commitish=${target_branch}")
-release_id=$(printf '%s' "$release_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+release_id=$(printf '%s' "$release_json" \
+  | grep -oE '"id"[[:space:]]*:[[:space:]]*[0-9]+' \
+  | head -n 1 \
+  | tr -cd '0-9')
+[[ "$release_id" =~ ^[0-9]+$ ]] || {
+  echo "Gitee did not return a valid release id." >&2
+  exit 1
+}
 
 for asset in app-release.apk app-release.apk.sha256 update.json; do
   curl --fail-with-body --silent --show-error --request POST "${api}/${release_id}/attach_files" \
