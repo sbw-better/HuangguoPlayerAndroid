@@ -59,7 +59,7 @@ triggers:
       include: []
 notify: []
 variables:
-  UPDATE_REPOSITORY: Sibingwei/HuangguoPlayerAndroid
+  UPDATE_REPOSITORY: sibingwei/huangguo-player-android
   global:
   - ANDROID_KEYSTORE_BASE64
   - ANDROID_KEYSTORE_PASSWORD
