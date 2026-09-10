@@ -19,8 +19,9 @@ stages:
     artifacts:
     - name: ANDROID_RELEASE
       path:
-      - app/build/outputs/apk/release
-      type: .tar.gz
+      - app/build/outputs/apk/release/app-release.apk
+      - app/build/outputs/apk/release/app-release.apk.sha256
+      - app/build/outputs/apk/release/update.json
     caches:
     - "~/.gradle/caches"
     strategy:
