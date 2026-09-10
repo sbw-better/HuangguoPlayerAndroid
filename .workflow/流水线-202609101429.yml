@@ -15,32 +15,21 @@ stages:
     buildToolsVersion: 36.1.0
     ndkVersion: 28.2.13676358
     commands:
-    - |
-      set -e
-      chmod +x gradlew
-      for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD GITEE_ACCESS_TOKEN; do
-        test -n "$(printenv "$name")" || { echo "Missing Gitee Go secret: $name" >&2; exit 1; }
-      done
-      export RELEASE_BUILD_NUMBER="$(date +%s)"
-      printf "%s" "$ANDROID_KEYSTORE_BASE64" | base64 -d > huangguo-player.jks
-      test -s huangguo-player.jks || { echo "Decoded keystore is empty" >&2; exit 1; }
-      export ANDROID_KEYSTORE_PATH="$PWD/huangguo-player.jks"
-      ./gradlew --no-daemon -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" -PreleaseStoreFile="$ANDROID_KEYSTORE_PATH" -PreleaseStorePassword="$ANDROID_KEYSTORE_PASSWORD" -PreleaseKeyAlias="$ANDROID_KEY_ALIAS" -PreleaseKeyPassword="$ANDROID_KEY_PASSWORD" clean lintRelease assembleRelease
-      apk_dir="app/build/outputs/apk/release"
-      sha256="$(sha256sum "$apk_dir/app-release.apk" | awk '{print $1}')"
-      printf "%s  %s\n" "$sha256" "app-release.apk" > "$apk_dir/app-release.apk.sha256"
-      printf '{"versionCode":%s,"versionName":"2.0.%s","apkName":"app-release.apk","sha256":"%s"}\n' "$((20000000 + RELEASE_BUILD_NUMBER))" "$RELEASE_BUILD_NUMBER" "$sha256" > "$apk_dir/update.json"
-      api_base="https://gitee.com/api/v5/repos/sibingwei/huangguo-player-android"
-      release_json="$(curl -fsS "$api_base/releases/tags/v2.0-latest?access_token=$GITEE_ACCESS_TOKEN" 2>/dev/null || true)"
-      release_id="$(printf '%s' "$release_json" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)"
-      if test -z "$release_id"; then
-        release_json="$(curl -fsS -X POST "$api_base/releases" --data-urlencode "access_token=$GITEE_ACCESS_TOKEN" --data-urlencode 'tag_name=v2.0-latest' --data-urlencode 'name=HuangguoPlayer Android' --data-urlencode 'body=由 Gitee Go 自动构建的 Android 安装包。' --data-urlencode 'target_commitish=main')"
-        release_id="$(printf '%s' "$release_json" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)"
-      fi
-      test -n "$release_id" || { echo "Unable to create or find Gitee Release" >&2; exit 1; }
-      for asset in app-release.apk app-release.apk.sha256 update.json; do
-        curl -fsS -X POST "$api_base/releases/$release_id/attach_files" -F "access_token=$GITEE_ACCESS_TOKEN" -F "file=@$apk_dir/$asset" >/dev/null
-      done
+    - "set -e; chmod +x gradlew; for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD\
+      \ ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do test -n \"$(printenv \"$name\"\
+      )\" || { echo \"Missing Gitee Go secret: $name\" >&2; exit 1; }; done; export\
+      \ RELEASE_BUILD_NUMBER=\"$(date +%s)\"; printf \"%s\" \"$ANDROID_KEYSTORE_BASE64\"\
+      \ | base64 -d > huangguo-player.jks; test -s huangguo-player.jks || { echo \"\
+      Decoded keystore is empty\" >&2; exit 1; }; export ANDROID_KEYSTORE_PATH=\"\
+      $PWD/huangguo-player.jks\"; ./gradlew --no-daemon -PreleaseBuildNumber=\"$RELEASE_BUILD_NUMBER\"\
+      \ -PreleaseStoreFile=\"$ANDROID_KEYSTORE_PATH\" -PreleaseStorePassword=\"$ANDROID_KEYSTORE_PASSWORD\"\
+      \ -PreleaseKeyAlias=\"$ANDROID_KEY_ALIAS\" -PreleaseKeyPassword=\"$ANDROID_KEY_PASSWORD\"\
+      \ clean lintRelease assembleRelease; apk_dir=\"app/build/outputs/apk/release\"\
+      ; sha256=\"$(sha256sum \"$apk_dir/app-release.apk\" | awk \"{print \\$1}\")\"\
+      ; printf \"%s  %s\\n\" \"$sha256\" \"app-release.apk\" > \"$apk_dir/app-release.apk.sha256\"\
+      ; printf \"{\\\"versionCode\\\":%s,\\\"versionName\\\":\\\"2.0.%s\\\",\\\"apkName\\\
+      \":\\\"app-release.apk\\\",\\\"sha256\\\":\\\"%s\\\"}\\n\" \"$((20000000 + RELEASE_BUILD_NUMBER))\"\
+      \ \"$RELEASE_BUILD_NUMBER\" \"$sha256\" > \"$apk_dir/update.json\""
     artifacts:
     - name: ANDROID_RELEASE
       path:
@@ -49,6 +38,30 @@ stages:
       - app/build/outputs/apk/release/update.json
     caches:
     - "~/.gradle/caches"
+    strategy:
+      retry: "0"
+      resource:
+        cpu: "2"
+        memory: "4"
+- name: 发布发行版
+  displayName: 发布发行版
+  strategy: naturally
+  trigger: auto
+  steps:
+  - step: release@gitee
+    name: publish-gitee-release
+    displayName: 发布 Gitee Release
+    releaseName: HuangguoPlayer Android
+    description: 由 Gitee Go 自动构建的 Android 安装包。
+    tagName: v2.0-latest
+    upstreamArtifact:
+    - ANDROID_RELEASE
+    assertFiles:
+    - app/build/outputs/apk/release/app-release.apk
+    - app/build/outputs/apk/release/app-release.apk.sha256
+    - app/build/outputs/apk/release/update.json
+    prerelease: false
+    allowUpdate: true
     strategy:
       retry: "0"
       resource:
@@ -71,4 +84,3 @@ variables:
   - ANDROID_KEYSTORE_PASSWORD
   - ANDROID_KEY_ALIAS
   - ANDROID_KEY_PASSWORD
-  - GITEE_ACCESS_TOKEN
