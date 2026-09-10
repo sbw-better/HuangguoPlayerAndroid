@@ -1,0 +1,43 @@
+version: "1.0"
+name: android-release
+displayName: Android自动构建发布
+stages:
+- name: 构建并发布
+  displayName: 构建并发布
+  strategy: naturally
+  trigger: auto
+  steps:
+  - step: build@android
+    name: 8ff4c6f5
+    displayName: 构建 APK
+    jdkVersion: "17"
+    gradleVersion: "9.3"
+    buildToolsVersion: 36.1.0
+    ndkVersion: 28.2.13676358
+    commands:
+    - chmod +x gradlew
+    - ""
+    - ./gradlew --no-daemon -PreleaseBuildNumber="$(date +%s)" clean lintRelease assembleRelease
+    artifacts:
+    - name: ANDROID_RELEASE
+      path:
+      - app/build/outputs/apk/release
+      type: .tar.gz
+    caches:
+    - "~/.gradle/caches"
+    strategy:
+      retry: "0"
+      resource:
+        cpu: "2"
+        memory: "4"
+triggers:
+  trigger: auto
+  push:
+    branches:
+      prefix:
+      - ""
+      precise: []
+      include: []
+notify: []
+variables:
+  UPDATE_REPOSITORY: Sibingwei/HuangguoPlayerAndroid
