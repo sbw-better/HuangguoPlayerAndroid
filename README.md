@@ -158,36 +158,31 @@ Workflow 使用 JDK 17、Android SDK 36、Build Tools 36.0.0、Gradle 9.6.0，�
 
 ## 自动发布与应用内更新
 
-每次向 `main` 分支推送代码后，GitHub Actions 会自动：
+本项目可使用 Gitee 作为唯一的代码仓库、构建平台和更新发布源，不需要在电脑或手机上访问 GitHub。App 每次启动时从 Gitee Release 读取版本、`update.json` 与 SHA-256，下载完成后校验 APK 并打开系统安装确认页。
 
-1. 构建并签名 release APK；
-2. 上传临时构建产物；
-3. 创建一个 GitHub Release，并附上 APK、SHA256 文件与 `update.json` 更新元数据。
+### Gitee Go 自动构建与发布
 
-GitHub Actions 只负责构建并发布 GitHub Release。为避免 GitHub 云端执行器上传 Gitee 的跨境网络瓶颈，请在电脑上运行 [`scripts/sync-github-release-to-gitee.ps1`](scripts/sync-github-release-to-gitee.ps1)，它会下载最新的 GitHub Release 并从本机上传到 Gitee。应用每次冷启动时会检查 Gitee 的最新 Release；新版本优先读取结构化的 `update.json`，旧版本仍兼容 Release 文案中的 `versionCode`；下载完成后会校验 APK 的 SHA-256，再打开 Android 系统安装确认页。
+在 Gitee 仓库的流水线中创建一个推送 `main` 分支触发的 Android 构建，并把下列值保存为受保护变量或凭证，绝不写入代码：
 
-### 本机一键同步到 Gitee
-
-先把 Gitee 的仓库级个人令牌保存为当前用户环境变量（令牌只需要 `projects` 权限）：
-
-```powershell
-setx GITEE_TOKEN "你的 Gitee 令牌"
+```text
+ANDROID_KEYSTORE_BASE64
+ANDROID_KEYSTORE_PASSWORD
+ANDROID_KEY_ALIAS
+ANDROID_KEY_PASSWORD
+GITEE_TOKEN
+GITEE_UPDATE_REPOSITORY=你的Gitee用户名/仓库名
 ```
 
-关闭并重新打开 PowerShell，然后在项目根目录运行：
+流水线 Shell 阶段需要使用 JDK 17、Android SDK 36、Build Tools 36.0.0 与 Gradle 9.6.0。构建与发布命令如下：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\sync-github-release-to-gitee.ps1
+```bash
+export RELEASE_BUILD_NUMBER=$(date +%s)
+gradle --no-daemon -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" clean lintRelease assembleRelease
+./scripts/publish-gitee-release.sh
 ```
 
-脚本默认同步最新 GitHub Release；若需同步指定版本，传入标签，例如 `-Tag v2.0.26`。电脑需要能访问 GitHub（可开 VPN），但手机随后从 Gitee 下载更新时不需要 VPN。首次安装带有此功能的版本仍需手动下载并安装；之后的版本才会出现应用内更新提示。
+`RELEASE_BUILD_NUMBER` 使用 Unix 时间戳，确保每次发布的 Android `versionCode` 都更高。发布脚本会创建 Gitee Release，并上传 `app-release.apk`、`app-release.apk.sha256` 和 `update.json`。
 
-若 Gitee Release 附件下载速度不足，可先把同一份 `app-release.apk` 上传到国内对象存储或 CDN，再通过 `-ApkCdnUrl` 写入更新元数据：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\sync-github-release-to-gitee.ps1 -ApkCdnUrl "https://你的CDN域名/app-release.apk"
-```
-
-应用仍从 Gitee 读取版本与 SHA-256，但会从该 HTTPS CDN 地址下载 APK，并在下载前核对大小、下载后校验 SHA-256。CDN 必须提供同一份 APK，且正确返回 `Content-Length`。
+首次安装仍需手动下载 APK；之后用户可在 App 内检查更新。若以后配置国内对象存储或 CDN，可在 `update.json` 中增加 HTTPS 的 `apkUrl`，App 会优先使用该地址并继续校验文件大小与 SHA-256。
 
 Android 不允许普通应用静默安装更新。首次更新时，系统会要求授权“允许此应用安装未知应用”，之后仍需要在系统安装页确认。

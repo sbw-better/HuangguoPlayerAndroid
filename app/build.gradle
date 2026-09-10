@@ -2,10 +2,13 @@ plugins {
     id 'com.android.application'
 }
 
-def ciRunNumber = providers.environmentVariable('GITHUB_RUN_NUMBER').orElse('0').get().toInteger()
-def versionCodeValue = 20_000_000 + ciRunNumber
-// Keep a public fallback so release APKs can still check updates if a CI environment
-// does not expose GITHUB_REPOSITORY to the Gradle process.
+def releaseBuildNumber = providers.gradleProperty('releaseBuildNumber')
+        .orElse(providers.environmentVariable('RELEASE_BUILD_NUMBER'))
+        // Keep GitHub Actions compatible until the repository is migrated.
+        .orElse(providers.environmentVariable('GITHUB_RUN_NUMBER'))
+        .orElse('0').get().toInteger()
+def versionCodeValue = 20_000_000 + releaseBuildNumber
+// Kept for compatibility with builds that still use GitHub Actions.
 def updateRepository = providers.environmentVariable('GITHUB_REPOSITORY')
         .orElse('sbw-better/HuangguoPlayerAndroid').get()
 def giteeUpdateRepository = providers.environmentVariable('GITEE_UPDATE_REPOSITORY')
@@ -23,9 +26,9 @@ android {
         applicationId 'com.example.huangguoplayer'
         minSdk 24
         targetSdk 36
-        // GitHub Actions supplies an ever-increasing run number, so every APK can update its predecessor.
+        // The release pipeline supplies an ever-increasing number for upgrade compatibility.
         versionCode versionCodeValue
-        versionName "2.0.${ciRunNumber}"
+        versionName "2.0.${releaseBuildNumber}"
         // Filled by GitHub Actions so release builds know where to check for updates.
         buildConfigField 'String', 'UPDATE_REPOSITORY', "\"${updateRepository}\""
         // Updates are mirrored locally to Gitee after each GitHub Release.
