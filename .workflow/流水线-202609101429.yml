@@ -14,10 +14,26 @@ stages:
     gradleVersion: "9.3"
     buildToolsVersion: 36.1.0
     ndkVersion: 28.2.13676358
-    commands:
-    - chmod +x gradlew
-    - ./gradlew --no-daemon -PreleaseBuildNumber="$(date +%s)" clean lintRelease assembleRelease
-    artifacts:
+            commands:
+          - |
+            set -e
+            chmod +x gradlew
+            export RELEASE_BUILD_NUMBER="$(date +%s)"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > huangguo-player.jks
+            export ANDROID_KEYSTORE_PATH="$PWD/huangguo-player.jks"
+
+            ./gradlew --no-daemon \
+              -PreleaseBuildNumber="$RELEASE_BUILD_NUMBER" \
+              clean lintRelease assembleRelease
+
+            apk_dir="app/build/outputs/apk/release"
+            sha256="$(sha256sum "$apk_dir/app-release.apk" | awk '{print $1}')"
+            printf '%s  %s\n' "$sha256" "app-release.apk" > "$apk_dir/app-release.apk.sha256"
+            printf '{"versionCode":%s,"versionName":"2.0.%s","apkName":"app-release.apk","sha256":"%s"}\n' \
+              "$((20000000 + RELEASE_BUILD_NUMBER))" \
+              "$RELEASE_BUILD_NUMBER" \
+              "$sha256" > "$apk_dir/update.json"
+        artifacts:
     - name: ANDROID_RELEASE
       path:
       - app/build/outputs/apk/release
