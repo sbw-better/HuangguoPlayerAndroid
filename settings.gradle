@@ -7,7 +7,10 @@ pluginManagement {
 }
 
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    // Gitee Go injects its domestic Maven mirror through an init script. Allow
+    // that project-level repository instead of rejecting the build before any
+    // Android dependency can be resolved.
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
     repositories {
         google()
         mavenCentral()
