@@ -53,9 +53,7 @@ stages:
     upstreamArtifact:
     - ANDROID_RELEASE
     assertFiles:
-    - app/build/outputs/apk/release/app-release.apk
-    - app/build/outputs/apk/release/app-release.apk.sha256
-    - app/build/outputs/apk/release/update.json
+    - artifact_ANDROID_RELEASE.tar.gz
     prerelease: false
     allowUpdate: true
     strategy:
