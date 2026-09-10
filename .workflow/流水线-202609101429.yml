@@ -43,14 +43,10 @@ stages:
       resource:
         cpu: "2"
         memory: "4"
-- name: 发布发行版
-  displayName: 发布发行版
-  strategy: naturally
-  trigger: auto
-  steps:
   - step: release@gitee
     name: publish-gitee-release
     displayName: 发布 Gitee Release
+    dependsOn: build-apk
     releaseName: HuangguoPlayer Android
     description: 由 Gitee Go 自动构建的 Android 安装包。
     tagName: v2.0-latest
