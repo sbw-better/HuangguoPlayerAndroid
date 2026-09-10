@@ -15,10 +15,16 @@ def giteeUpdateRepository = providers.environmentVariable('GITEE_UPDATE_REPOSITO
         // Gitee Go reserves the GITEE_ prefix for built-in variables.
         .orElse(providers.environmentVariable('UPDATE_REPOSITORY'))
         .orElse('sibingwei/huangguoplayer-update').get()
-def releaseStoreFile = System.getenv('ANDROID_KEYSTORE_PATH')
-def releaseStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
-def releaseKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
-def releaseKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+// Gradle properties are used by Gitee Go; environment variables retain
+// compatibility with the existing GitHub Actions release build.
+def releaseStoreFile = providers.gradleProperty('releaseStoreFile')
+        .orElse(providers.environmentVariable('ANDROID_KEYSTORE_PATH')).orNull
+def releaseStorePassword = providers.gradleProperty('releaseStorePassword')
+        .orElse(providers.environmentVariable('ANDROID_KEYSTORE_PASSWORD')).orNull
+def releaseKeyAlias = providers.gradleProperty('releaseKeyAlias')
+        .orElse(providers.environmentVariable('ANDROID_KEY_ALIAS')).orNull
+def releaseKeyPassword = providers.gradleProperty('releaseKeyPassword')
+        .orElse(providers.environmentVariable('ANDROID_KEY_PASSWORD')).orNull
 
 android {
     namespace 'com.example.huangguoplayer'
