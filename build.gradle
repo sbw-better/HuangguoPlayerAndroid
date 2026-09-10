@@ -1,3 +1,15 @@
 plugins {
     id 'com.android.application' version '9.4.0' apply false
 }
+
+// Gitee Go adds an old JCenter mirror through its init script. Because the
+// pipeline must accept that project-level repository, also declare mirrors for
+// the Android (Google) and Maven Central artifacts used by this application.
+allprojects {
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        google()
+        mavenCentral()
+    }
+}
