@@ -23,6 +23,9 @@ def releaseKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
 android {
     namespace 'com.example.huangguoplayer'
     compileSdk 36
+    // Gitee Go provides Build Tools 36.1.0 in its read-only Android SDK. Without
+    // this explicit version, Gradle tries to install its default 36.0.0 there.
+    buildToolsVersion "36.1.0"
 
     defaultConfig {
         applicationId 'com.example.huangguoplayer'
