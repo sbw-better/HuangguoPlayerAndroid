@@ -1473,9 +1473,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void enqueueUpdateDownload(UpdateInfo update, DownloadSource source) {
-        updateDownloadPreparing = false;
         File downloadDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
         if (downloadDir == null) {
+            updateDownloadPreparing = false;
             Toast.makeText(this, "无法创建更新下载目录", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -1483,21 +1483,59 @@ public class MainActivity extends AppCompatActivity {
         pendingUpdateUri = null;
         pendingUpdateSha256 = update.sha256;
         if (pendingUpdateApk.exists()) pendingUpdateApk.delete();
-        // Let DownloadManager own its temporary destination.  Some OEM download
-        // services lose an app-provided external-files path before installation.
-        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(source.url))
-                .setTitle("短剧播放器更新")
-                .setDescription("正在下载新版本（" + formatFileSize(source.sizeBytes) + "）")
-                .setMimeType("application/vnd.android.package-archive")
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
-        updateDownloadId = ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(request);
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putLong(KEY_UPDATE_DOWNLOAD_ID, updateDownloadId)
-                .putString(KEY_UPDATE_FILE, pendingUpdateApk.getAbsolutePath())
-                .remove(KEY_UPDATE_FILE_URI)
-                .putString(KEY_UPDATE_SHA256, pendingUpdateSha256)
-                .apply();
-        Toast.makeText(this, "已开始下载更新", Toast.LENGTH_SHORT).show();
+        File apkFile = pendingUpdateApk;
+        String expectedSha256 = pendingUpdateSha256;
+        Toast.makeText(this, "正在下载更新（" + formatFileSize(source.sizeBytes) + "）", Toast.LENGTH_SHORT).show();
+        io.execute(() -> downloadAndInstallUpdate(source, apkFile, expectedSha256));
+    }
+
+    private void downloadAndInstallUpdate(DownloadSource source, File destination, String expectedSha256) {
+        File temporary = new File(destination.getParentFile(), destination.getName() + ".part");
+        HttpURLConnection connection = null;
+        try {
+            if (temporary.exists()) temporary.delete();
+            connection = openConnection(source.url, "https://gitee.com/");
+            int responseCode = connection.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                throw new IllegalStateException("HTTP " + responseCode);
+            }
+            long copied = 0L;
+            try (InputStream input = connection.getInputStream();
+                 FileOutputStream output = new FileOutputStream(temporary)) {
+                byte[] buffer = new byte[32 * 1024];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    copied += count;
+                    if (copied > MAX_UPDATE_APK_BYTES) throw new IllegalStateException("更新包大小异常");
+                    output.write(buffer, 0, count);
+                }
+                output.flush();
+            }
+            if (copied <= 0 || copied != source.sizeBytes) {
+                throw new IllegalStateException("下载文件大小不完整");
+            }
+            if (!expectedSha256.isEmpty() && !expectedSha256.equalsIgnoreCase(sha256(temporary))) {
+                throw new IllegalStateException("文件校验失败");
+            }
+            if (destination.exists() && !destination.delete()) {
+                throw new IllegalStateException("无法替换旧更新包");
+            }
+            if (!temporary.renameTo(destination)) throw new IllegalStateException("无法保存更新包");
+            main.post(() -> {
+                updateDownloadPreparing = false;
+                installUpdateApk(destination, null);
+            });
+        } catch (Exception e) {
+            if (temporary.exists()) temporary.delete();
+            if (destination.exists()) destination.delete();
+            main.post(() -> {
+                updateDownloadPreparing = false;
+                clearPendingUpdate(false);
+                Toast.makeText(this, "更新下载失败：" + safeMessage(e), Toast.LENGTH_LONG).show();
+            });
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 
     private DownloadSource verifyUpdateDownload(UpdateInfo update) throws Exception {
