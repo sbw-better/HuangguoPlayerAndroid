@@ -10,7 +10,7 @@ def releaseBuildNumber = providers.gradleProperty('releaseBuildNumber')
 def versionCodeValue = 20_000_000 + releaseBuildNumber
 def releaseVersionName = providers.gradleProperty('releaseVersionName')
         .orElse(providers.environmentVariable('RELEASE_VERSION_NAME'))
-        .orElse('2.0.31').get()
+        .orElse('2.0.32').get()
 // Kept for compatibility with builds that still use GitHub Actions.
 def updateRepository = providers.environmentVariable('GITHUB_REPOSITORY')
         .orElse('sbw-better/HuangguoPlayerAndroid').get()

@@ -15,7 +15,7 @@ apk_path="$apk_dir/app-release.apk"
 
 version_code=$((20000000 + RELEASE_BUILD_NUMBER))
 tag="v2.0.${RELEASE_BUILD_NUMBER}"
-release_version_name="${RELEASE_VERSION_NAME:-2.0.31}"
+release_version_name="${RELEASE_VERSION_NAME:-2.0.32}"
 sha256=$(sha256sum "$apk_path" | awk '{print $1}')
 printf '%s  %s\n' "$sha256" "app-release.apk" > "$apk_dir/app-release.apk.sha256"
 

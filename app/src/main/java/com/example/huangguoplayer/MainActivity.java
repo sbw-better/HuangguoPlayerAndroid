@@ -18,7 +18,6 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.net.Uri;
@@ -1473,8 +1472,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void enqueueUpdateDownload(UpdateInfo update, DownloadSource source) {
-        File downloadDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-        if (downloadDir == null) {
+        File downloadDir = new File(getFilesDir(), "updates");
+        if ((!downloadDir.exists() && !downloadDir.mkdirs()) || !downloadDir.isDirectory()) {
             updateDownloadPreparing = false;
             Toast.makeText(this, "无法创建更新下载目录", Toast.LENGTH_SHORT).show();
             return;
@@ -1482,7 +1481,16 @@ public class MainActivity extends AppCompatActivity {
         pendingUpdateApk = new File(downloadDir, "huangguoplayer-" + update.versionCode + ".apk");
         pendingUpdateUri = null;
         pendingUpdateSha256 = update.sha256;
+        updateDownloadId = -1L;
         if (pendingUpdateApk.exists()) pendingUpdateApk.delete();
+        // Persist the target before leaving this Activity. Some OEM permission
+        // screens recreate the process while granting unknown-app install access.
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putLong(KEY_UPDATE_DOWNLOAD_ID, -1L)
+                .putString(KEY_UPDATE_FILE, pendingUpdateApk.getAbsolutePath())
+                .remove(KEY_UPDATE_FILE_URI)
+                .putString(KEY_UPDATE_SHA256, pendingUpdateSha256)
+                .apply();
         File apkFile = pendingUpdateApk;
         String expectedSha256 = pendingUpdateSha256;
         Toast.makeText(this, "正在下载更新（" + formatFileSize(source.sizeBytes) + "）", Toast.LENGTH_SHORT).show();
@@ -1521,6 +1529,9 @@ public class MainActivity extends AppCompatActivity {
                 throw new IllegalStateException("无法替换旧更新包");
             }
             if (!temporary.renameTo(destination)) throw new IllegalStateException("无法保存更新包");
+            if (!destination.isFile() || destination.length() != copied) {
+                throw new IllegalStateException("更新包保存后不可用");
+            }
             main.post(() -> {
                 updateDownloadPreparing = false;
                 installUpdateApk(destination, null);
@@ -1659,6 +1670,13 @@ public class MainActivity extends AppCompatActivity {
                 && !getPackageManager().canRequestPackageInstalls()) {
             pendingUpdateApk = apkFile;
             pendingUpdateUri = downloadedUri;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putLong(KEY_UPDATE_DOWNLOAD_ID, -1L)
+                    .putString(KEY_UPDATE_FILE, apkFile.getAbsolutePath())
+                    .putString(KEY_UPDATE_FILE_URI,
+                            downloadedUri == null ? "" : downloadedUri.toString())
+                    .putString(KEY_UPDATE_SHA256, pendingUpdateSha256)
+                    .apply();
             new AlertDialog.Builder(this)
                     .setTitle("允许安装更新")
                     .setMessage("请允许“短剧播放器”安装未知来源应用，随后会自动打开安装确认页。")
@@ -2229,8 +2247,6 @@ public class MainActivity extends AppCompatActivity {
                 && getPackageManager().canRequestPackageInstalls()) {
             File apkFile = pendingUpdateApk;
             Uri apkUri = pendingUpdateUri;
-            pendingUpdateApk = null;
-            pendingUpdateUri = null;
             installUpdateApk(apkFile, apkUri);
         }
     }
