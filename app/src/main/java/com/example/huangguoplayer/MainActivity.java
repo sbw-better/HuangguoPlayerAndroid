@@ -145,7 +145,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int COLOR_SURFACE_ELEVATED = Color.rgb(26, 32, 44);
     private static final int COLOR_TEXT_PRIMARY = Color.rgb(248, 250, 252);
     private static final int COLOR_TEXT_SECONDARY = Color.rgb(185, 195, 210);
-
+    // 菜单分类
     private static final Category[] CATEGORIES = new Category[]{
             new Category("首页", "home"),
             new Category("AI成人短剧", "ai-duanju"),
