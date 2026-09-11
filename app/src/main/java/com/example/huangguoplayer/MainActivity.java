@@ -67,6 +67,7 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -1482,17 +1483,13 @@ public class MainActivity extends AppCompatActivity {
         pendingUpdateUri = null;
         pendingUpdateSha256 = update.sha256;
         if (pendingUpdateApk.exists()) pendingUpdateApk.delete();
+        // Let DownloadManager own its temporary destination.  Some OEM download
+        // services lose an app-provided external-files path before installation.
         DownloadManager.Request request = new DownloadManager.Request(Uri.parse(source.url))
                 .setTitle("短剧播放器更新")
                 .setDescription("正在下载新版本（" + formatFileSize(source.sizeBytes) + "）")
                 .setMimeType("application/vnd.android.package-archive")
-                // The APK lives in this app's external-files directory.  On some OEM
-                // builds the completed-download notification is opened by the system
-                // downloader, which has no access to that private path and reports
-                // ENOENT while parsing.  The completion receiver below opens it via
-                // FileProvider instead.
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
-                .setDestinationUri(Uri.fromFile(pendingUpdateApk));
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
         updateDownloadId = ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(request);
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putLong(KEY_UPDATE_DOWNLOAD_ID, updateDownloadId)
@@ -1571,9 +1568,10 @@ public class MainActivity extends AppCompatActivity {
                 .apply();
         final File apkFile = pendingUpdateApk;
         final String expectedSha256 = pendingUpdateSha256;
-        final Uri apkUri = completedDownloadUri;
+        final Uri downloadedApkUri = completedDownloadUri;
         io.execute(() -> {
-            if (apkFile == null || !apkFile.isFile() || apkFile.length() == 0) {
+            if (apkFile == null || downloadedApkUri == null
+                    || !copyDownloadedApk(downloadedApkUri, apkFile)) {
                 main.post(() -> {
                     clearPendingUpdate(true);
                     Toast.makeText(this, "更新下载失败，请稍后重试", Toast.LENGTH_SHORT).show();
@@ -1584,7 +1582,9 @@ public class MainActivity extends AppCompatActivity {
                 if (!expectedSha256.isEmpty() && !expectedSha256.equalsIgnoreCase(sha256(apkFile))) {
                     throw new IllegalStateException("文件校验失败");
                 }
-                main.post(() -> installUpdateApk(apkFile, apkUri));
+                // Install from the copied FileProvider URI rather than the
+                // DownloadManager URI, which some OEM downloaders discard early.
+                main.post(() -> installUpdateApk(apkFile, null));
             } catch (Exception e) {
                 main.post(() -> {
                     clearPendingUpdate(true);
@@ -1592,6 +1592,23 @@ public class MainActivity extends AppCompatActivity {
                 });
             }
         });
+    }
+
+    private boolean copyDownloadedApk(Uri sourceUri, File destination) {
+        File parent = destination.getParentFile();
+        if (parent == null || (!parent.exists() && !parent.mkdirs())) return false;
+        try (InputStream input = getContentResolver().openInputStream(sourceUri);
+             FileOutputStream output = new FileOutputStream(destination)) {
+            if (input == null) return false;
+            byte[] buffer = new byte[32 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            output.flush();
+            return destination.isFile() && destination.length() > 0;
+        } catch (Exception ignored) {
+            if (destination.isFile()) destination.delete();
+            return false;
+        }
     }
 
     private void installUpdateApk(File apkFile, Uri downloadedUri) {
