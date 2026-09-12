@@ -179,9 +179,9 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout playerPanel;
     private PlayerView playerView;
     private FrameLayout videoContainer;
-    private Button fullscreenCloseButton;
     private int orientationBeforeFullscreen;
     private TextView nowPlaying;
+    private LinearLayout playerNowPlayingRow;
     private LinearLayout playerActions1;
     private LinearLayout playerActions2;
     private Button prevButton;
@@ -289,6 +289,7 @@ public class MainActivity extends AppCompatActivity {
         playerPanel = findViewById(R.id.playerPanel);
         playerView = findViewById(R.id.playerView);
         nowPlaying = findViewById(R.id.nowPlaying);
+        playerNowPlayingRow = findViewById(R.id.playerNowPlayingRow);
         playerActions1 = findViewById(R.id.playerActions1);
         playerActions2 = findViewById(R.id.playerActions2);
         prevButton = findViewById(R.id.prevButton);
@@ -305,13 +306,13 @@ public class MainActivity extends AppCompatActivity {
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
         videoContainer = findViewById(R.id.videoContainer);
-        fullscreenCloseButton = findViewById(R.id.fullscreenCloseButton);
-        fullscreenCloseButton.setOnClickListener(v -> closePlayer());
         playerView.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
             if (fullscreen) {
                 boolean inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode();
-                fullscreenCloseButton.setVisibility(inPip ? View.GONE : visibility);
-                playerActions2.setVisibility(inPip ? View.GONE : visibility);
+                int controlsVisibility = inPip ? View.GONE : visibility;
+                playerNowPlayingRow.setVisibility(controlsVisibility);
+                playerActions1.setVisibility(controlsVisibility);
+                playerActions2.setVisibility(controlsVisibility);
             }
         });
         player.setPlaybackParameters(new PlaybackParameters(playbackSpeed));
@@ -322,6 +323,7 @@ public class MainActivity extends AppCompatActivity {
         player.addListener(new Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int playbackState) {
+                syncKeepScreenOn();
                 if (playbackState == Player.STATE_READY) {
                     setStatus("");
                 }
@@ -329,6 +331,11 @@ public class MainActivity extends AppCompatActivity {
                         && currentEpisodeIndex < currentEpisodes.size() - 1) {
                     playEpisode(currentEpisodeIndex + 1);
                 }
+            }
+
+            @Override
+            public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+                syncKeepScreenOn();
             }
 
             @Override
@@ -341,6 +348,19 @@ public class MainActivity extends AppCompatActivity {
                 setStatus("播放失败：" + error.getErrorCodeName() + "，可点击重试");
             }
         });
+    }
+
+    private void syncKeepScreenOn() {
+        boolean keepScreenOn = player != null
+                && player.getPlayWhenReady()
+                && player.getPlaybackState() != Player.STATE_IDLE
+                && player.getPlaybackState() != Player.STATE_ENDED;
+        playerView.setKeepScreenOn(keepScreenOn);
+        if (keepScreenOn) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
     }
 
     private void setupEvents() {
@@ -891,6 +911,7 @@ public class MainActivity extends AppCompatActivity {
             player.pause();
             player.clearMediaItems();
         }
+        syncKeepScreenOn();
         playerPanel.setVisibility(View.GONE);
         currentMediaUrl = "";
         currentEpisodeIndex = -1;
@@ -952,8 +973,7 @@ public class MainActivity extends AppCompatActivity {
             nowPlaying.setVisibility(View.GONE);
             playerActions1.setVisibility(View.GONE);
             playerActions2.setVisibility(View.GONE);
-            ((View) nowPlaying.getParent()).setVisibility(View.GONE);
-            fullscreenCloseButton.setVisibility(View.GONE);
+            playerNowPlayingRow.setVisibility(View.GONE);
         } else if (fullscreen) {
             updateFullscreenOrientation(player.getVideoSize());
             playerView.showController();
@@ -979,9 +999,11 @@ public class MainActivity extends AppCompatActivity {
         topArea.setVisibility(View.GONE);
         statusText.setVisibility(View.GONE);
         contentScroll.setVisibility(View.GONE);
-        nowPlaying.setVisibility(View.GONE);
-        playerActions1.setVisibility(View.GONE);
-        playerActions2.setVisibility(View.GONE);
+        playerNowPlayingRow.setVisibility(View.VISIBLE);
+        nowPlaying.setVisibility(View.VISIBLE);
+        closePlayerButton.setVisibility(View.GONE);
+        playerActions1.setVisibility(View.VISIBLE);
+        playerActions2.setVisibility(View.VISIBLE);
         retryButton.setVisibility(View.GONE);
         speedButton.setVisibility(View.VISIBLE);
         pipButton.setVisibility(View.VISIBLE);
@@ -993,12 +1015,9 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout.LayoutParams videoLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
         videoContainer.setLayoutParams(videoLp);
-        ((View) nowPlaying.getParent()).setVisibility(View.GONE);
         playerView.setControllerShowTimeoutMs(FULLSCREEN_CONTROLS_TIMEOUT_MS);
         playerView.setControllerAutoShow(false);
         playerView.showController();
-        fullscreenCloseButton.setVisibility(View.VISIBLE);
-        playerActions2.setVisibility(View.VISIBLE);
         hideSystemBars();
     }
 
@@ -1013,7 +1032,6 @@ public class MainActivity extends AppCompatActivity {
 
     private void exitFullscreen() {
         fullscreen = false;
-        fullscreenCloseButton.setVisibility(View.GONE);
         playerView.setControllerShowTimeoutMs(NORMAL_CONTROLS_TIMEOUT_MS);
         playerView.setControllerAutoShow(true);
         setRequestedOrientation(orientationBeforeFullscreen);
@@ -1022,14 +1040,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void restoreNormalUi() {
-        ((View) nowPlaying.getParent()).setVisibility(View.VISIBLE);
-        fullscreenCloseButton.setVisibility(View.GONE);
+        playerNowPlayingRow.setVisibility(View.VISIBLE);
         topArea.setVisibility(View.VISIBLE);
         statusText.setVisibility(View.VISIBLE);
         contentScroll.setVisibility(View.VISIBLE);
         categoryScroll.setVisibility("home".equals(currentTab) ? View.VISIBLE : View.GONE);
         searchArea.setVisibility("search".equals(currentTab) ? View.VISIBLE : View.GONE);
         nowPlaying.setVisibility(View.VISIBLE);
+        closePlayerButton.setVisibility(View.VISIBLE);
         playerActions1.setVisibility(View.VISIBLE);
         playerActions2.setVisibility(View.VISIBLE);
         retryButton.setVisibility(View.VISIBLE);
@@ -2262,6 +2280,7 @@ public class MainActivity extends AppCompatActivity {
         main.removeCallbacks(progressSaver);
         if (updateReceiverRegistered) unregisterReceiver(updateDownloadReceiver);
         savePlaybackProgress();
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (player != null) player.release();
         io.shutdownNow();
         super.onDestroy();

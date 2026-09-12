@@ -245,21 +245,10 @@
             app:show_previous_button="false"
             app:use_controller="true"
             app:resize_mode="fit" />
-        <Button
-            android:id="@+id/fullscreenCloseButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_gravity="top|right"
-            android:layout_margin="8dp"
-            android:background="@drawable/bg_dark_button"
-            android:contentDescription="关闭播放"
-            android:text="×"
-            android:textColor="#E8ECF3"
-            android:textSize="24sp"
-            android:visibility="gone" />
         </FrameLayout>
 
         <LinearLayout
+            android:id="@+id/playerNowPlayingRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
@@ -271,7 +260,12 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
                 android:textColor="#F4F6F8"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <Button
