@@ -103,14 +103,13 @@ import okhttp3.Response;
 public class MainActivity extends AppCompatActivity {
 
     private static final String SITE_DIRECTORY = "https://huangguoai.ai";
-    // The main domain remains the most reliable search endpoint.  The rotating content
-    // mirrors below can serve detail and category pages, but some of them rewrite an
-    // unsupported search URL to their home page with HTTP 200.
+    // Retained only as a legacy search fallback. Current rotating mirrors serve
+    // category, search and playback pages directly.
     private static final String SEARCH_SITE = "https://huangguoai.com";
     private static final String[] CONTENT_SITE_FALLBACKS = {
-            "https://jtre7.bhefwntk.cc",
-            "https://pv9w5.bhefwntk.cc",
-            "https://wd7g.bhefwntk.cc"
+            "https://srdk.vqojfzoq.cc",
+            "https://s5gp9a.vqojfzoq.cc",
+            "https://htxy.vqojfzoq.cc"
     };
     private static final String UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
@@ -766,8 +765,7 @@ public class MainActivity extends AppCompatActivity {
         setStatus("正在读取：" + drama.title);
         io.execute(() -> {
             try {
-                String html = getContentPage("/detail/" + drama.id + "/");
-                List<Episode> episodes = parseEpisodes(html);
+                List<Episode> episodes = getDramaEpisodes(drama.id);
                 main.post(() -> {
                     if (requestId != episodeRequestId || currentDrama == null
                             || !drama.id.equals(currentDrama.id)) return;
@@ -1112,13 +1110,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private Drama parseCardBlock(String block) {
-        String id = firstGroup(block, "href=\\\"[^\\\"]*/detail/(\\d+)/[^\\\"]*\\\"");
+        String id = firstGroup(block, "href=\\\"[^\\\"]*/(?:detail|video)/(\\d+)/[^\\\"]*\\\"");
         if (id.isEmpty()) return null;
         String poster = firstGroup(block, "data-src=\\\"([^\\\"]+)\\\"");
         if (poster.isEmpty()) poster = firstGroup(block, "src=\\\"([^\\\"]+)\\\"");
         String title = firstGroup(block, "hg-drama-card__title[^>]*>([\\s\\S]*?)</a>");
         if (title.isEmpty()) {
-            title = firstGroup(block, "<a[^>]+href=\\\"[^\\\"]*/detail/\\d+/\\\"[^>]*>([\\s\\S]*?)</a>");
+            title = firstGroup(block, "<a[^>]+href=\\\"[^\\\"]*/(?:detail|video)/\\d+/\\\"[^>]*>([\\s\\S]*?)</a>");
         }
         title = stripTags(title);
         if (title.isEmpty()) return null;
@@ -1141,13 +1139,13 @@ public class MainActivity extends AppCompatActivity {
         for (int i = 0; i < starts.size(); i++) {
             int to = i + 1 < starts.size() ? starts.get(i + 1) : slice.length();
             String block = slice.substring(starts.get(i), to);
-            String id = firstGroup(block, "href=\\\"[^\\\"]*/detail/(\\d+)/[^\\\"]*\\\"");
+            String id = firstGroup(block, "href=\\\"[^\\\"]*/(?:detail|video)/(\\d+)/[^\\\"]*\\\"");
             if (id.isEmpty() || out.containsKey(id)) continue;
             String poster = firstGroup(block, "data-src=\\\"([^\\\"]+)\\\"");
             if (poster.isEmpty()) poster = firstGroup(block, "src=\\\"([^\\\"]+)\\\"");
             String title = stripTags(firstGroup(block, "hg-rank-item__title[^>]*>([\\s\\S]*?)</h2>"));
             if (title.isEmpty()) title = stripTags(firstGroup(block,
-                    "<a[^>]+href=\\\"[^\\\"]*/detail/\\d+/\\\"[^>]*>([\\s\\S]*?)</a>"));
+                    "<a[^>]+href=\\\"[^\\\"]*/(?:detail|video)/\\d+/\\\"[^>]*>([\\s\\S]*?)</a>"));
             if (title.isEmpty()) continue;
             String tags = stripTags(firstGroup(block, "hg-rank-item__tags[^>]*>([\\s\\S]*?)</div>"));
             out.put(id, new Drama(id, title, stableImageUrl(poster), tags));
@@ -1157,7 +1155,7 @@ public class MainActivity extends AppCompatActivity {
 
     private List<Drama> parseSearchFallback(String html) {
         LinkedHashMap<String, Drama> out = new LinkedHashMap<>();
-        Pattern anchor = Pattern.compile("<a\\b[^>]*href=\\\"([^\\\"]*/detail/(\\d+)/?[^\\\"]*)\\\"[^>]*>([\\s\\S]*?)</a>", Pattern.CASE_INSENSITIVE);
+        Pattern anchor = Pattern.compile("<a\\b[^>]*href=\\\"([^\\\"]*/(?:detail|video)/(\\d+)/?[^\\\"]*)\\\"[^>]*>([\\s\\S]*?)</a>", Pattern.CASE_INSENSITIVE);
         Matcher m = anchor.matcher(html);
         while (m.find()) {
             String id = m.group(2);
@@ -1813,8 +1811,10 @@ public class MainActivity extends AppCompatActivity {
 
     private List<String> searchSiteCandidates() {
         LinkedHashMap<String, Boolean> sites = new LinkedHashMap<>();
-        sites.put(SEARCH_SITE, true);
         for (String site : contentSiteCandidates()) sites.put(site, true);
+        // The legacy search origin is currently offline. Retain it only as a last
+        // resort so a dead host does not delay every search by the full timeout.
+        sites.put(SEARCH_SITE, true);
         return new ArrayList<>(sites.keySet());
     }
 
@@ -1858,6 +1858,20 @@ public class MainActivity extends AppCompatActivity {
         // Episode links belong to a rotating mirror. Reuse only their path so the
         // request can fail over when the mirror changes between list and playback.
         return getContentPage(pageUrl.getFile());
+    }
+
+    private List<Episode> getDramaEpisodes(String dramaId) throws Exception {
+        Exception lastFailure = null;
+        for (String route : new String[]{"/video/", "/detail/"}) {
+            try {
+                List<Episode> episodes = parseEpisodes(getContentPage(route + dramaId + "/"));
+                if (!episodes.isEmpty()) return episodes;
+            } catch (Exception e) {
+                lastFailure = e;
+            }
+        }
+        if (lastFailure != null) throw lastFailure;
+        return new ArrayList<>();
     }
 
     private String httpGetText(String url, String referer) throws Exception {
