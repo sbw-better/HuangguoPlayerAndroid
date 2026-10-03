@@ -40,6 +40,7 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -131,6 +132,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_PROGRESS = "progress";
     private static final String KEY_SEARCH_HISTORY = "search_history";
     private static final String KEY_SPEED = "playback_speed";
+    private static final String KEY_VOLUME = "playback_volume";
+    private static final String KEY_VOLUME_BEFORE_MUTE = "playback_volume_before_mute";
     private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
     private static final String KEY_UPDATE_FILE = "update_file";
     private static final String KEY_UPDATE_FILE_URI = "update_file_uri";
@@ -188,6 +191,7 @@ public class MainActivity extends AppCompatActivity {
     private Button nextButton;
     private Button retryButton;
     private Button speedButton;
+    private Button volumeButton;
     private Button pipButton;
     private Button fullscreenButton;
     private Button closePlayerButton;
@@ -206,6 +210,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean fullscreen = false;
     private String currentMediaUrl = "";
     private float playbackSpeed = 1f;
+    private float playbackVolume = 1f;
+    private float volumeBeforeMute = 1f;
     private int categoryRequestId = 0;
     private int searchRequestId = 0;
     private int episodeRequestId = 0;
@@ -250,6 +256,11 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         bindViews();
         playbackSpeed = getSharedPreferences(PREFS, MODE_PRIVATE).getFloat(KEY_SPEED, 1f);
+        playbackVolume = clampVolume(getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getFloat(KEY_VOLUME, 1f));
+        volumeBeforeMute = clampVolume(getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getFloat(KEY_VOLUME_BEFORE_MUTE, 1f));
+        if (volumeBeforeMute <= 0f) volumeBeforeMute = 1f;
         activeContentSite = getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString(KEY_CONTENT_SITE, "");
         setupPlayer();
@@ -259,6 +270,7 @@ public class MainActivity extends AppCompatActivity {
         renderSearchHistory();
         styleTabs();
         updateSpeedButton();
+        updateVolumeButton();
         loadCategory("home", true);
         registerUpdateDownloadReceiver();
         restorePendingUpdateDownload();
@@ -296,6 +308,7 @@ public class MainActivity extends AppCompatActivity {
         nextButton = findViewById(R.id.nextButton);
         retryButton = findViewById(R.id.retryButton);
         speedButton = findViewById(R.id.speedButton);
+        volumeButton = findViewById(R.id.volumeButton);
         pipButton = findViewById(R.id.pipButton);
         fullscreenButton = findViewById(R.id.fullscreenButton);
         closePlayerButton = findViewById(R.id.closePlayerButton);
@@ -304,6 +317,7 @@ public class MainActivity extends AppCompatActivity {
     private void setupPlayer() {
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
+        player.setVolume(playbackVolume);
         videoContainer = findViewById(R.id.videoContainer);
         playerView.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
             if (fullscreen) {
@@ -389,6 +403,7 @@ public class MainActivity extends AppCompatActivity {
         episodeButton.setOnClickListener(v -> showEpisodeDialog());
         retryButton.setOnClickListener(v -> retryCurrent());
         speedButton.setOnClickListener(v -> showSpeedDialog());
+        volumeButton.setOnClickListener(v -> showVolumeDialog());
         pipButton.setOnClickListener(v -> enterPip());
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
         closePlayerButton.setOnClickListener(v -> closePlayer());
@@ -943,6 +958,91 @@ public class MainActivity extends AppCompatActivity {
                 ? ((int) playbackSpeed) + ".0x"
                 : playbackSpeed + "x";
         speedButton.setText(s);
+    }
+
+    private void showVolumeDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(22), dp(6), dp(22), 0);
+
+        TextView value = new TextView(this);
+        value.setTextColor(COLOR_TEXT_PRIMARY);
+        value.setTextSize(16);
+        value.setGravity(Gravity.CENTER);
+        panel.addView(value, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        SeekBar seekBar = new SeekBar(this);
+        seekBar.setMax(100);
+        seekBar.setProgress(Math.round(playbackVolume * 100f));
+        panel.addView(seekBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button muteButton = new Button(this);
+        muteButton.setAllCaps(false);
+        muteButton.setTextColor(COLOR_TEXT_PRIMARY);
+        muteButton.setBackground(rounded(COLOR_SURFACE_ELEVATED, 14));
+        panel.addView(muteButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        updateVolumeDialogControls(value, muteButton);
+
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (!fromUser) return;
+                setPlaybackVolume(progress / 100f);
+                updateVolumeDialogControls(value, muteButton);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) { }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) { }
+        });
+
+        muteButton.setOnClickListener(v -> {
+            setPlaybackVolume(playbackVolume <= 0f ? volumeBeforeMute : 0f);
+            seekBar.setProgress(Math.round(playbackVolume * 100f));
+            updateVolumeDialogControls(value, muteButton);
+        });
+
+        new AlertDialog.Builder(this)
+                .setTitle("播放音量")
+                .setView(panel)
+                .setPositiveButton("完成", null)
+                .show();
+    }
+
+    private void setPlaybackVolume(float volume) {
+        playbackVolume = clampVolume(volume);
+        if (playbackVolume > 0f) volumeBeforeMute = playbackVolume;
+        if (player != null) player.setVolume(playbackVolume);
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putFloat(KEY_VOLUME, playbackVolume)
+                .putFloat(KEY_VOLUME_BEFORE_MUTE, volumeBeforeMute)
+                .apply();
+        updateVolumeButton();
+    }
+
+    private void updateVolumeDialogControls(TextView value, Button muteButton) {
+        value.setText(playbackVolume <= 0f
+                ? "已静音"
+                : "当前音量 " + Math.round(playbackVolume * 100f) + "%");
+        muteButton.setText(playbackVolume <= 0f ? "恢复声音" : "静音");
+    }
+
+    private void updateVolumeButton() {
+        if (volumeButton == null) return;
+        int percent = Math.round(playbackVolume * 100f);
+        volumeButton.setText(playbackVolume <= 0f ? "静音" : "音量 " + percent + "%");
+        volumeButton.setContentDescription(playbackVolume <= 0f
+                ? "当前已静音，点击调整音量"
+                : "当前播放音量 " + percent + "%，点击调整");
+    }
+
+    private float clampVolume(float volume) {
+        return Math.max(0f, Math.min(1f, volume));
     }
 
     private void enterPip() {

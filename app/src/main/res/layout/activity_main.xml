@@ -346,6 +346,20 @@
                 android:textAllCaps="false" />
 
             <Button
+                android:id="@+id/volumeButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_dark_button"
+                android:minWidth="0dp"
+                android:paddingStart="2dp"
+                android:paddingEnd="2dp"
+                android:text="音量 100%"
+                android:textColor="#E8ECF3"
+                android:textSize="12sp"
+                android:textAllCaps="false" />
+
+            <Button
                 android:id="@+id/pipButton"
                 android:layout_width="0dp"
                 android:layout_height="40dp"
