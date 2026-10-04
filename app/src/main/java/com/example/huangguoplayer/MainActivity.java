@@ -37,6 +37,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -185,13 +186,15 @@ public class MainActivity extends AppCompatActivity {
     private TextView nowPlaying;
     private LinearLayout playerNowPlayingRow;
     private LinearLayout playerActions1;
+    private LinearLayout playerVolumeRow;
     private LinearLayout playerActions2;
     private Button prevButton;
     private Button episodeButton;
     private Button nextButton;
     private Button retryButton;
     private Button speedButton;
-    private Button volumeButton;
+    private ImageButton volumeMuteButton;
+    private SeekBar volumeSeekBar;
     private Button pipButton;
     private Button fullscreenButton;
     private Button closePlayerButton;
@@ -270,7 +273,7 @@ public class MainActivity extends AppCompatActivity {
         renderSearchHistory();
         styleTabs();
         updateSpeedButton();
-        updateVolumeButton();
+        updateVolumeControls();
         loadCategory("home", true);
         registerUpdateDownloadReceiver();
         restorePendingUpdateDownload();
@@ -302,13 +305,15 @@ public class MainActivity extends AppCompatActivity {
         nowPlaying = findViewById(R.id.nowPlaying);
         playerNowPlayingRow = findViewById(R.id.playerNowPlayingRow);
         playerActions1 = findViewById(R.id.playerActions1);
+        playerVolumeRow = findViewById(R.id.playerVolumeRow);
         playerActions2 = findViewById(R.id.playerActions2);
         prevButton = findViewById(R.id.prevButton);
         episodeButton = findViewById(R.id.episodeButton);
         nextButton = findViewById(R.id.nextButton);
         retryButton = findViewById(R.id.retryButton);
         speedButton = findViewById(R.id.speedButton);
-        volumeButton = findViewById(R.id.volumeButton);
+        volumeMuteButton = findViewById(R.id.volumeMuteButton);
+        volumeSeekBar = findViewById(R.id.volumeSeekBar);
         pipButton = findViewById(R.id.pipButton);
         fullscreenButton = findViewById(R.id.fullscreenButton);
         closePlayerButton = findViewById(R.id.closePlayerButton);
@@ -325,6 +330,7 @@ public class MainActivity extends AppCompatActivity {
                 int controlsVisibility = inPip ? View.GONE : visibility;
                 playerNowPlayingRow.setVisibility(controlsVisibility);
                 playerActions1.setVisibility(controlsVisibility);
+                playerVolumeRow.setVisibility(controlsVisibility);
                 playerActions2.setVisibility(controlsVisibility);
             }
         });
@@ -403,7 +409,27 @@ public class MainActivity extends AppCompatActivity {
         episodeButton.setOnClickListener(v -> showEpisodeDialog());
         retryButton.setOnClickListener(v -> retryCurrent());
         speedButton.setOnClickListener(v -> showSpeedDialog());
-        volumeButton.setOnClickListener(v -> showVolumeDialog());
+        volumeMuteButton.setOnClickListener(v ->
+                setPlaybackVolume(playbackVolume <= 0f ? volumeBeforeMute : 0f));
+        volumeSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser) setPlaybackVolume(progress / 100f);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                if (fullscreen) playerView.setControllerShowTimeoutMs(0);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                if (fullscreen) {
+                    playerView.setControllerShowTimeoutMs(FULLSCREEN_CONTROLS_TIMEOUT_MS);
+                    playerView.showController();
+                }
+            }
+        });
         pipButton.setOnClickListener(v -> enterPip());
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
         closePlayerButton.setOnClickListener(v -> closePlayer());
@@ -960,60 +986,6 @@ public class MainActivity extends AppCompatActivity {
         speedButton.setText(s);
     }
 
-    private void showVolumeDialog() {
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(22), dp(6), dp(22), 0);
-
-        TextView value = new TextView(this);
-        value.setTextColor(COLOR_TEXT_PRIMARY);
-        value.setTextSize(16);
-        value.setGravity(Gravity.CENTER);
-        panel.addView(value, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        SeekBar seekBar = new SeekBar(this);
-        seekBar.setMax(100);
-        seekBar.setProgress(Math.round(playbackVolume * 100f));
-        panel.addView(seekBar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        Button muteButton = new Button(this);
-        muteButton.setAllCaps(false);
-        muteButton.setTextColor(COLOR_TEXT_PRIMARY);
-        muteButton.setBackground(rounded(COLOR_SURFACE_ELEVATED, 14));
-        panel.addView(muteButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
-        updateVolumeDialogControls(value, muteButton);
-
-        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                if (!fromUser) return;
-                setPlaybackVolume(progress / 100f);
-                updateVolumeDialogControls(value, muteButton);
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) { }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) { }
-        });
-
-        muteButton.setOnClickListener(v -> {
-            setPlaybackVolume(playbackVolume <= 0f ? volumeBeforeMute : 0f);
-            seekBar.setProgress(Math.round(playbackVolume * 100f));
-            updateVolumeDialogControls(value, muteButton);
-        });
-
-        new AlertDialog.Builder(this)
-                .setTitle("播放音量")
-                .setView(panel)
-                .setPositiveButton("完成", null)
-                .show();
-    }
-
     private void setPlaybackVolume(float volume) {
         playbackVolume = clampVolume(volume);
         if (playbackVolume > 0f) volumeBeforeMute = playbackVolume;
@@ -1022,23 +994,20 @@ public class MainActivity extends AppCompatActivity {
                 .putFloat(KEY_VOLUME, playbackVolume)
                 .putFloat(KEY_VOLUME_BEFORE_MUTE, volumeBeforeMute)
                 .apply();
-        updateVolumeButton();
+        updateVolumeControls();
     }
 
-    private void updateVolumeDialogControls(TextView value, Button muteButton) {
-        value.setText(playbackVolume <= 0f
-                ? "已静音"
-                : "当前音量 " + Math.round(playbackVolume * 100f) + "%");
-        muteButton.setText(playbackVolume <= 0f ? "恢复声音" : "静音");
-    }
-
-    private void updateVolumeButton() {
-        if (volumeButton == null) return;
+    private void updateVolumeControls() {
+        if (volumeMuteButton == null || volumeSeekBar == null) return;
         int percent = Math.round(playbackVolume * 100f);
-        volumeButton.setText(playbackVolume <= 0f ? "静音" : "音量 " + percent + "%");
-        volumeButton.setContentDescription(playbackVolume <= 0f
-                ? "当前已静音，点击调整音量"
-                : "当前播放音量 " + percent + "%，点击调整");
+        volumeSeekBar.setProgress(percent);
+        volumeSeekBar.setContentDescription("播放音量 " + percent + "%");
+        volumeMuteButton.setImageResource(playbackVolume <= 0f
+                ? R.drawable.ic_volume_off
+                : R.drawable.ic_volume_up);
+        volumeMuteButton.setContentDescription(playbackVolume <= 0f
+                ? "恢复声音"
+                : "静音，当前音量 " + percent + "%");
     }
 
     private float clampVolume(float volume) {
@@ -1070,6 +1039,7 @@ public class MainActivity extends AppCompatActivity {
             contentScroll.setVisibility(View.GONE);
             nowPlaying.setVisibility(View.GONE);
             playerActions1.setVisibility(View.GONE);
+            playerVolumeRow.setVisibility(View.GONE);
             playerActions2.setVisibility(View.GONE);
             playerNowPlayingRow.setVisibility(View.GONE);
         } else if (fullscreen) {
@@ -1101,6 +1071,7 @@ public class MainActivity extends AppCompatActivity {
         nowPlaying.setVisibility(View.VISIBLE);
         closePlayerButton.setVisibility(View.GONE);
         playerActions1.setVisibility(View.VISIBLE);
+        playerVolumeRow.setVisibility(View.VISIBLE);
         playerActions2.setVisibility(View.VISIBLE);
         retryButton.setVisibility(View.GONE);
         speedButton.setVisibility(View.VISIBLE);
@@ -1147,6 +1118,7 @@ public class MainActivity extends AppCompatActivity {
         nowPlaying.setVisibility(View.VISIBLE);
         closePlayerButton.setVisibility(View.VISIBLE);
         playerActions1.setVisibility(View.VISIBLE);
+        playerVolumeRow.setVisibility(View.VISIBLE);
         playerActions2.setVisibility(View.VISIBLE);
         retryButton.setVisibility(View.VISIBLE);
         fullscreenButton.setText("全屏");

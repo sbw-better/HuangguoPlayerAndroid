@@ -319,6 +319,35 @@
         </LinearLayout>
 
         <LinearLayout
+            android:id="@+id/playerVolumeRow"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/volumeMuteButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_dark_button"
+                android:contentDescription="静音"
+                android:padding="10dp"
+                android:src="@drawable/ic_volume_up"
+                android:tint="#E8ECF3" />
+
+            <SeekBar
+                android:id="@+id/volumeSeekBar"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="100"
+                android:contentDescription="播放音量" />
+        </LinearLayout>
+
+        <LinearLayout
             android:id="@+id/playerActions2"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -343,20 +372,6 @@
                 android:background="@drawable/bg_dark_button"
                 android:text="1.0x"
                 android:textColor="#E8ECF3"
-                android:textAllCaps="false" />
-
-            <Button
-                android:id="@+id/volumeButton"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:background="@drawable/bg_dark_button"
-                android:minWidth="0dp"
-                android:paddingStart="2dp"
-                android:paddingEnd="2dp"
-                android:text="音量 100%"
-                android:textColor="#E8ECF3"
-                android:textSize="12sp"
                 android:textAllCaps="false" />
 
             <Button
