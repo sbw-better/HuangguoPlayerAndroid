@@ -1288,34 +1288,45 @@ public class MainActivity extends AppCompatActivity {
     private String extractPlayback(String html, String ep) throws Exception {
         if (html == null || html.isEmpty()) return "";
 
-        // Newer site builds sometimes reorder script attributes or rename the
-        // initial-data script. Inspect all JSON scripts and select one containing
-        // playback fields instead of depending on one exact tag spelling.
+        // Newer site builds sometimes rename the data script and vary the casing
+        // of the playback fields. Inspect each script independently so an unrelated
+        // or malformed inline script cannot prevent trying the remaining sources.
         Matcher scripts = Pattern.compile(
                 "<script\\b([^>]*)>([\\s\\S]*?)</script>", Pattern.CASE_INSENSITIVE).matcher(html);
         while (scripts.find()) {
-            String attrs = scripts.group(1);
             String body = scripts.group(2).trim();
-            boolean likelyPlaybackData = attrs.toLowerCase(Locale.ROOT).contains("videoinitialdata")
-                    || body.contains("\\\"epPlaySrcs\\\"")
-                    || body.contains("\\\"videoSrc\\\"");
-            if (!likelyPlaybackData || body.isEmpty()) continue;
-            String url = playbackUrlFromJson(new JSONObject(body), ep);
-            if (!url.isEmpty()) return url;
+            if (body.isEmpty()) continue;
+            try {
+                String url = playbackUrlFromJson(new JSONObject(body), ep);
+                if (!url.isEmpty()) return url;
+            } catch (Exception ignored) {
+                // This script was not a JSON playback payload.
+            }
+        }
+
+        // Some site builds store playback URLs in a JavaScript object or use
+        // single-quoted keys/values rather than a JSON script.
+        Matcher sourceField = Pattern.compile(
+                "[\\\"'](?:videoSrc|video_src|playUrl|play_url|url|src)[\\\"']\\s*:\\s*[\\\"']([^\\\"']+)[\\\"']",
+                Pattern.CASE_INSENSITIVE).matcher(html);
+        while (sourceField.find()) {
+            String url = normalizePlaybackUrl(sourceField.group(1));
+            if (isPlaybackUrl(url)) return url;
         }
 
         // Last resort for site variants that put the HLS source directly in inline
-        // JavaScript rather than in videoInitialData.
+        // JavaScript rather than in a named data field.
         Matcher direct = Pattern.compile(
-                "[\\\"'](https?:\\\\?/\\\\?/[^\\\"'\\s<>]+?\\.m3u8(?:\\?[^\\\"'\\s<>]*)?)[\\\"']",
+                "https?:[\\\\/]{2}[^\\s\\\"'<>]+?\\.m3u8(?:\\?[^\\s\\\"'<>]*)?",
                 Pattern.CASE_INSENSITIVE).matcher(html);
-        if (direct.find()) return normalizePlaybackUrl(direct.group(1));
+        if (direct.find()) return normalizePlaybackUrl(direct.group());
         return "";
     }
 
     private String playbackUrlFromJson(JSONObject data, String ep) throws Exception {
         String url = "";
         JSONObject epMap = data.optJSONObject("epPlaySrcs");
+        if (epMap == null) epMap = data.optJSONObject("epPlaysrcs");
         if (epMap != null) url = epMap.optString(ep, "");
         if (url.isEmpty()) {
             Object rawMap = data.opt("epPlaySrcs");
@@ -1325,7 +1336,10 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         if (url.isEmpty()) url = data.optString("videoSrc", "");
+        if (url.isEmpty()) url = data.optString("videosrc", "");
         if (url.isEmpty()) url = data.optString("video_src", "");
+        if (url.isEmpty()) url = data.optString("playUrl", "");
+        if (url.isEmpty()) url = data.optString("play_url", "");
         return normalizePlaybackUrl(url);
     }
 
@@ -1343,6 +1357,11 @@ public class MainActivity extends AppCompatActivity {
                 Pattern.CASE_INSENSITIVE).matcher(url);
         if (embedded.find()) return embedded.group();
         return url.startsWith("http://") || url.startsWith("https://") ? url : "";
+    }
+
+    private boolean isPlaybackUrl(String url) {
+        return url != null && (url.toLowerCase(Locale.ROOT).contains(".m3u8")
+                || url.toLowerCase(Locale.ROOT).contains(".mp4"));
     }
 
     private void checkForAppUpdate() {
