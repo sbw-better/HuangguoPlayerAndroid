@@ -31,6 +31,11 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
+import android.webkit.CookieManager;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.app.AlertDialog;
 import android.widget.Button;
 import android.widget.EditText;
@@ -59,10 +64,12 @@ import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
+import androidx.media3.exoplayer.source.ProgressiveMediaSource;
 import androidx.media3.ui.PlayerView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -182,6 +189,12 @@ public class MainActivity extends AppCompatActivity {
     private Button loadMoreButton;
     private LinearLayout playerPanel;
     private PlayerView playerView;
+    private WebView playbackResolver;
+    private boolean resolverMediaFound;
+    private int resolverPlaybackRequestId = -1;
+    private int resolverEpisodeIndex = -1;
+    private String resolverDramaId = "";
+    private String playbackReferer = "";
     private FrameLayout videoContainer;
     private int orientationBeforeFullscreen;
     private TextView nowPlaying;
@@ -326,6 +339,7 @@ public class MainActivity extends AppCompatActivity {
         playerView.setPlayer(player);
         player.setVolume(playbackVolume);
         videoContainer = findViewById(R.id.videoContainer);
+        setupPlaybackResolver();
         playerView.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
             if (fullscreen) {
                 boolean inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode();
@@ -885,6 +899,7 @@ public class MainActivity extends AppCompatActivity {
         savePlaybackProgress();
         currentEpisodeIndex = index;
         Episode ep = currentEpisodes.get(index);
+        playbackReferer = ep.url;
         playerPanel.setVisibility(View.VISIBLE);
         nowPlaying.setText(currentDrama.title + " · " + ep.name);
         syncEpisodeNavigationButtons();
@@ -899,9 +914,7 @@ public class MainActivity extends AppCompatActivity {
                 String mediaUrl = extractPlayback(html, ep.ep);
                 if (mediaUrl.isEmpty()) {
                     String diagnostic = playbackDiagnostic(ep, html, null);
-                    main.post(() -> {
-                        if (requestId == playbackRequestId) showPlaybackDiagnostic(diagnostic);
-                    });
+                    main.post(() -> resolvePlaybackInWebView(ep, index, dramaId, requestId, diagnostic));
                     return;
                 }
                 main.post(() -> {
@@ -974,18 +987,123 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void setupPlaybackResolver() {
+        playbackResolver = new WebView(this);
+        playbackResolver.setVisibility(View.INVISIBLE);
+        playbackResolver.setBackgroundColor(Color.BLACK);
+        WebSettings settings = playbackResolver.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setUserAgentString(UA);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        CookieManager.getInstance().setAcceptCookie(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            CookieManager.getInstance().setAcceptThirdPartyCookies(playbackResolver, true);
+        }
+        playbackResolver.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return false;
+            }
+
+            @Override
+            public void onLoadResource(WebView view, String url) {
+                super.onLoadResource(view, url);
+                acceptResolverMediaUrl(url);
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                inspectWebViewPlayer();
+            }
+        });
+        videoContainer.addView(playbackResolver, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void resolvePlaybackInWebView(Episode ep, int index, String dramaId,
+                                           int requestId, String initialDiagnostic) {
+        if (requestId != playbackRequestId || currentDrama == null
+                || !dramaId.equals(currentDrama.id) || playbackResolver == null) return;
+        resolverMediaFound = false;
+        resolverPlaybackRequestId = requestId;
+        resolverEpisodeIndex = index;
+        resolverDramaId = dramaId;
+        lastPlaybackDiagnostic = initialDiagnostic;
+        setStatus("正在执行网页播放器解析…");
+        playbackResolver.stopLoading();
+        playbackResolver.loadUrl(ep.url);
+        main.postDelayed(() -> inspectWebViewPlayer(), 900);
+        main.postDelayed(() -> inspectWebViewPlayer(), 2600);
+        main.postDelayed(() -> inspectWebViewPlayer(), 5200);
+        main.postDelayed(() -> inspectWebViewPlayer(), 8500);
+        main.postDelayed(() -> {
+            if (requestId == playbackRequestId && !resolverMediaFound) {
+                lastPlaybackDiagnostic += "\n网页播放器兜底：已执行页面脚本，仍未发现可识别的视频资源";
+                showPlaybackDiagnostic(lastPlaybackDiagnostic);
+                playbackResolver.stopLoading();
+            }
+        }, 10000);
+    }
+
+    private void inspectWebViewPlayer() {
+        if (playbackResolver == null || resolverMediaFound) return;
+        String script = "(function(){var a=[];" +
+                "document.querySelectorAll('video,video source,source').forEach(function(e){" +
+                "if(e.currentSrc)a.push(e.currentSrc);if(e.src)a.push(e.src);});" +
+                "performance.getEntriesByType('resource').forEach(function(e){" +
+                "if(/\\.(m3u8|mp4)(\\?|$)/i.test(e.name))a.push(e.name);});" +
+                "return JSON.stringify(Array.from(new Set(a)));})()";
+        playbackResolver.evaluateJavascript(script, value -> {
+            try {
+                Object parsed = new JSONTokener(value).nextValue();
+                JSONArray urls = parsed instanceof JSONArray ? (JSONArray) parsed
+                        : new JSONArray(parsed instanceof String ? (String) parsed : "[]");
+                for (int i = 0; i < urls.length(); i++) acceptResolverMediaUrl(urls.optString(i));
+            } catch (Exception ignored) {
+                // A page may not have created its video element yet; later inspections retry.
+            }
+        });
+    }
+
+    private void acceptResolverMediaUrl(String candidate) {
+        String mediaUrl = normalizePlaybackUrl(candidate);
+        if (resolverMediaFound || resolverPlaybackRequestId != playbackRequestId
+                || currentDrama == null || !resolverDramaId.equals(currentDrama.id)
+                || !isPlaybackUrl(mediaUrl)) return;
+        resolverMediaFound = true;
+        main.post(() -> {
+            if (resolverPlaybackRequestId == playbackRequestId && currentDrama != null
+                    && resolverDramaId.equals(currentDrama.id)
+                    && resolverEpisodeIndex >= 0 && playbackResolver != null) {
+                playbackResolver.stopLoading();
+                CookieManager.getInstance().flush();
+                setStatus("");
+                startHls(mediaUrl, resolverEpisodeIndex);
+            }
+        });
+    }
+
     private void startHls(String mediaUrl, int episodeIndex) {
         currentMediaUrl = mediaUrl;
         Map<String, String> headers = new HashMap<>();
-        headers.put("Referer", currentContentSite() + "/");
+        headers.put("Referer", playbackReferer.isEmpty() ? currentContentSite() + "/" : playbackReferer);
         headers.put("User-Agent", UA);
+        String cookie = CookieManager.getInstance().getCookie(mediaUrl);
+        if (cookie != null && !cookie.isEmpty()) headers.put("Cookie", cookie);
 
         OkHttpDataSource.Factory httpFactory = new OkHttpDataSource.Factory(CONTENT_HTTP_CLIENT)
                 .setDefaultRequestProperties(headers);
 
         DefaultDataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(this, httpFactory);
-        HlsMediaSource mediaSource = new HlsMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(MediaItem.fromUri(mediaUrl));
+        MediaItem mediaItem = MediaItem.fromUri(mediaUrl);
+        androidx.media3.exoplayer.source.MediaSource mediaSource =
+                mediaUrl.toLowerCase(Locale.ROOT).contains(".m3u8")
+                        ? new HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+                        : new ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem);
 
         player.stop();
         player.setMediaSource(mediaSource);
@@ -1011,6 +1129,7 @@ public class MainActivity extends AppCompatActivity {
     private void closePlayer() {
         savePlaybackProgress();
         ++playbackRequestId;
+        if (playbackResolver != null) playbackResolver.stopLoading();
         if (fullscreen) exitFullscreen();
         if (player != null) {
             player.pause();
@@ -2495,6 +2614,11 @@ public class MainActivity extends AppCompatActivity {
         savePlaybackProgress();
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (player != null) player.release();
+        if (playbackResolver != null) {
+            playbackResolver.stopLoading();
+            playbackResolver.destroy();
+            playbackResolver = null;
+        }
         io.shutdownNow();
         super.onDestroy();
     }
