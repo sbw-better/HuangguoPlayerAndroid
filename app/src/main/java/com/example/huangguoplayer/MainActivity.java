@@ -176,6 +176,7 @@ public class MainActivity extends AppCompatActivity {
     private Button tabFav;
     private Button tabRecent;
     private TextView statusText;
+    private String lastPlaybackDiagnostic = "";
     private ScrollView contentScroll;
     private GridLayout contentGrid;
     private Button loadMoreButton;
@@ -297,6 +298,7 @@ public class MainActivity extends AppCompatActivity {
         tabFav = findViewById(R.id.tabFav);
         tabRecent = findViewById(R.id.tabRecent);
         statusText = findViewById(R.id.statusText);
+        statusText.setOnClickListener(v -> copyPlaybackDiagnostic());
         contentScroll = findViewById(R.id.contentScroll);
         contentGrid = findViewById(R.id.contentGrid);
         loadMoreButton = findViewById(R.id.loadMoreButton);
@@ -887,13 +889,21 @@ public class MainActivity extends AppCompatActivity {
         nowPlaying.setText(currentDrama.title + " · " + ep.name);
         syncEpisodeNavigationButtons();
         setStatus("正在解析 " + ep.name + "...");
+        lastPlaybackDiagnostic = "";
         saveRecent(currentDrama, index, ep.name);
 
         io.execute(() -> {
+            String html = "";
             try {
-                String html = getEpisodePage(ep.url);
+                html = getEpisodePage(ep.url);
                 String mediaUrl = extractPlayback(html, ep.ep);
-                if (mediaUrl.isEmpty()) throw new IllegalStateException("未解析到播放地址");
+                if (mediaUrl.isEmpty()) {
+                    String diagnostic = playbackDiagnostic(ep, html, null);
+                    main.post(() -> {
+                        if (requestId == playbackRequestId) showPlaybackDiagnostic(diagnostic);
+                    });
+                    return;
+                }
                 main.post(() -> {
                     if (requestId == playbackRequestId && currentDrama != null
                             && dramaId.equals(currentDrama.id)) {
@@ -901,11 +911,67 @@ public class MainActivity extends AppCompatActivity {
                     }
                 });
             } catch (Exception e) {
+                String diagnostic = playbackDiagnostic(ep, html, e);
                 main.post(() -> {
-                    if (requestId == playbackRequestId) setStatus("解析失败：" + safeMessage(e));
+                    if (requestId == playbackRequestId) showPlaybackDiagnostic(diagnostic);
                 });
             }
         });
+    }
+
+    private String playbackDiagnostic(Episode ep, String html, Exception error) {
+        String page = html == null ? "" : html;
+        String route;
+        try {
+            route = Uri.parse(ep.url).getPath();
+        } catch (Exception ignored) {
+            route = "(路径不可用)";
+        }
+        if (route == null || route.isEmpty()) route = "(空路径)";
+        boolean playerData = containsAny(page, "videoInitialData", "epPlaySrcs", "video_src",
+                "videosrc", "playUrl", "play_url", "player_aaaa");
+        boolean hls = page.toLowerCase(Locale.ROOT).contains(".m3u8");
+        boolean mp4 = page.toLowerCase(Locale.ROOT).contains(".mp4");
+        boolean blocked = containsAny(page.toLowerCase(Locale.ROOT), "captcha", "访问过于频繁",
+                "人机验证", "forbidden", "access denied");
+        String reason = "未解析到播放地址";
+        if (error != null) {
+            String message = error.getMessage();
+            Matcher http = Pattern.compile("HTTP\\s+(\\d{3})", Pattern.CASE_INSENSITIVE)
+                    .matcher(message == null ? "" : message);
+            reason = http.find() ? "页面请求失败，HTTP " + http.group(1)
+                    : "页面请求/解析异常：" + error.getClass().getSimpleName();
+        }
+        return "播放诊断\n" +
+                "剧集：" + ep.name + "（" + ep.ep + "）\n" +
+                "页面路径：" + route + "\n" +
+                "原因：" + reason + "\n" +
+                "页面字符数：" + page.length() + "\n" +
+                "播放器数据标记：" + (playerData ? "有" : "无") + "\n" +
+                "页面内 HLS 标记：" + (hls ? "有" : "无") + "；MP4 标记：" + (mp4 ? "有" : "无") + "\n" +
+                "疑似验证/拦截页：" + (blocked ? "是" : "否");
+    }
+
+    private boolean containsAny(String value, String... markers) {
+        for (String marker : markers) {
+            if (value.contains(marker.toLowerCase(Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    private void showPlaybackDiagnostic(String diagnostic) {
+        lastPlaybackDiagnostic = diagnostic;
+        setStatus("播放解析失败，点击此处复制诊断信息");
+    }
+
+    private void copyPlaybackDiagnostic() {
+        if (lastPlaybackDiagnostic.isEmpty()) return;
+        android.content.ClipboardManager clipboard =
+                (android.content.ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null) {
+            clipboard.setPrimaryClip(ClipData.newPlainText("播放诊断", lastPlaybackDiagnostic));
+            Toast.makeText(this, "诊断信息已复制，可粘贴发送", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void startHls(String mediaUrl, int episodeIndex) {
