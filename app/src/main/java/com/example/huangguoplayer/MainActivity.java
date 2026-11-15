@@ -1286,21 +1286,63 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String extractPlayback(String html, String ep) throws Exception {
-        Pattern p = Pattern.compile("<script\\b[^>]*id=[\\\"']videoInitialData[\\\"'][^>]*>([\\s\\S]*?)</script>", Pattern.CASE_INSENSITIVE);
-        Matcher m = p.matcher(html);
-        if (!m.find()) return "";
+        if (html == null || html.isEmpty()) return "";
 
-        JSONObject data = new JSONObject(m.group(1).trim());
+        // Newer site builds sometimes reorder script attributes or rename the
+        // initial-data script. Inspect all JSON scripts and select one containing
+        // playback fields instead of depending on one exact tag spelling.
+        Matcher scripts = Pattern.compile(
+                "<script\\b([^>]*)>([\\s\\S]*?)</script>", Pattern.CASE_INSENSITIVE).matcher(html);
+        while (scripts.find()) {
+            String attrs = scripts.group(1);
+            String body = scripts.group(2).trim();
+            boolean likelyPlaybackData = attrs.toLowerCase(Locale.ROOT).contains("videoinitialdata")
+                    || body.contains("\\\"epPlaySrcs\\\"")
+                    || body.contains("\\\"videoSrc\\\"");
+            if (!likelyPlaybackData || body.isEmpty()) continue;
+            String url = playbackUrlFromJson(new JSONObject(body), ep);
+            if (!url.isEmpty()) return url;
+        }
+
+        // Last resort for site variants that put the HLS source directly in inline
+        // JavaScript rather than in videoInitialData.
+        Matcher direct = Pattern.compile(
+                "[\\\"'](https?:\\\\?/\\\\?/[^\\\"'\\s<>]+?\\.m3u8(?:\\?[^\\\"'\\s<>]*)?)[\\\"']",
+                Pattern.CASE_INSENSITIVE).matcher(html);
+        if (direct.find()) return normalizePlaybackUrl(direct.group(1));
+        return "";
+    }
+
+    private String playbackUrlFromJson(JSONObject data, String ep) throws Exception {
         String url = "";
         JSONObject epMap = data.optJSONObject("epPlaySrcs");
         if (epMap != null) url = epMap.optString(ep, "");
-        if (url.isEmpty()) url = data.optString("videoSrc", "");
-        url = decodeHtml(url.replace("\\u0026", "&").trim());
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            Matcher embedded = Pattern.compile("https?://[^\\s\\\"'<>]+", Pattern.CASE_INSENSITIVE).matcher(url);
-            if (embedded.find()) url = embedded.group();
+        if (url.isEmpty()) {
+            Object rawMap = data.opt("epPlaySrcs");
+            if (rawMap instanceof String) {
+                try { url = new JSONObject((String) rawMap).optString(ep, ""); }
+                catch (Exception ignored) { }
+            }
         }
-        return url;
+        if (url.isEmpty()) url = data.optString("videoSrc", "");
+        if (url.isEmpty()) url = data.optString("video_src", "");
+        return normalizePlaybackUrl(url);
+    }
+
+    private String normalizePlaybackUrl(String value) {
+        if (value == null || value.trim().isEmpty()) return "";
+        String url = decodeHtml(value.trim())
+                .replace("\\\\/", "/")
+                .replace("\\\\u0026", "&")
+                .replace("\\u0026", "&")
+                .replace("\\\\u003d", "=")
+                .replace("\\u003d", "=")
+                .replace("&amp;", "&");
+        Matcher embedded = Pattern.compile(
+                "https?://[^\\s\\\"'<>]+?\\.m3u8(?:\\?[^\\s\\\"'<>]*)?",
+                Pattern.CASE_INSENSITIVE).matcher(url);
+        if (embedded.find()) return embedded.group();
+        return url.startsWith("http://") || url.startsWith("https://") ? url : "";
     }
 
     private void checkForAppUpdate() {
